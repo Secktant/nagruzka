@@ -1,7 +1,7 @@
 // Service worker «Нагрузки». Стратегия: network-first с откатом в кэш —
 // онлайн всегда свежие файлы, офлайн работает из кэша.
 // Версию кэша поднимать при изменении набора файлов.
-const CACHE = 'nagruzka-v1';
+const CACHE = 'nagruzka-v2';
 const ASSETS = [
   './',
   'index.html',
@@ -18,7 +18,10 @@ const ASSETS = [
 
 self.addEventListener('install', e => {
   e.waitUntil(
-    caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE)
+      .then(c => Promise.all(ASSETS.map(u =>
+        fetch(u, { cache: 'reload' }).then(r => c.put(u, r)).catch(() => {}))))
+      .then(() => self.skipWaiting())
   );
 });
 
@@ -35,8 +38,10 @@ self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
   if (url.origin !== location.origin) return; // чужие запросы не трогаем (их и нет)
 
+  // cache: 'reload' — берём из сети в обход HTTP-кэша браузера (иначе отдаёт устаревшее),
+  // офлайн — откат в кэш.
   e.respondWith(
-    fetch(e.request)
+    fetch(e.request, { cache: 'reload' })
       .then(resp => {
         const copy = resp.clone();
         caches.open(CACHE).then(c => c.put(e.request, copy)).catch(() => {});

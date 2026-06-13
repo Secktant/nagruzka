@@ -39,7 +39,10 @@
     <button class="tab" data-tab="settings"><span class="ico">⚙️</span>Настройки</button>
   </nav>
 
-  <dialog id="modal"><div id="modal-body"></div></dialog>
+  <dialog id="modal">
+    <button id="modal-close" type="button" aria-label="Закрыть">×</button>
+    <div id="modal-body"></div>
+  </dialog>
 
   <script type="module" src="js/app.js"></script>
   <script>

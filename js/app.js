@@ -1114,6 +1114,7 @@ async function main() {
   $('#next-month').addEventListener('click', () => shiftMonth(1));
   $$('.tab').forEach(t => t.addEventListener('click', () => { view.tab = t.dataset.tab; render(); }));
   $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
+  $('#modal-close').onclick = closeModal;
   wireMoneyInputs(document);
   render();
 }
