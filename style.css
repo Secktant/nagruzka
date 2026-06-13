@@ -15,22 +15,34 @@
 
 * { box-sizing: border-box; }
 
+html { height: 100%; }
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
   font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
+  /* app-раскладка: экран на всю высоту, тулбар в потоке внизу (не fixed —
+     иначе на iOS standalone уезжает в зависимости от скролла экрана) */
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
 }
 
 .shell {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
   max-width: 920px;
   margin: 0 auto;
   /* safe-area: не наезжаем на чёлку/Dynamic Island и боковые скругления */
   padding:
     calc(20px + env(safe-area-inset-top))
     calc(16px + env(safe-area-inset-right))
-    90px
+    24px
     calc(16px + env(safe-area-inset-left));
 }
 
@@ -444,8 +456,7 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .year-nav button[disabled] { opacity: .35; cursor: default; }
 
 .tabbar {
-  position: fixed;
-  bottom: 0; left: 0; right: 0;
+  flex: 0 0 auto;        /* в потоке, всегда у нижней кромки экрана */
   display: flex;
   justify-content: space-around;
   background: rgba(14,17,22,.92);
