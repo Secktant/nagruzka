@@ -231,6 +231,10 @@ dialog {
   max-height: min(90vh, 90dvh);
   margin: auto;
   overflow: hidden;
+}
+/* раскладку включаем только у ОТКРЫТОЙ модалки — иначе закрытый <dialog>
+   перестаёт скрываться (display:none по умолчанию) и крестик висит на главной */
+dialog[open] {
   display: flex;
   flex-direction: column;
 }
