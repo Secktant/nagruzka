@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Нагрузка</title>
+  <link rel="stylesheet" href="style.css">
+
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0e1116">
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Нагрузка">
+</head>
+<body>
+  <div class="shell">
+    <div class="topbar">
+      <div class="brand">Нагрузка<small>финансовый календарь</small></div>
+      <div class="month-nav" id="month-nav">
+        <button id="prev-month" aria-label="Предыдущий месяц">‹</button>
+        <div id="month-title"></div>
+        <button id="next-month" aria-label="Следующий месяц">›</button>
+      </div>
+    </div>
+
+    <div id="view-periods" class="view"><div id="periods"></div></div>
+    <div id="view-debts" class="view" hidden></div>
+    <div id="view-chart" class="view" hidden></div>
+    <div id="view-settings" class="view" hidden></div>
+  </div>
+
+  <nav class="tabbar">
+    <button class="tab active" data-tab="periods"><span class="ico">📅</span>Периоды</button>
+    <button class="tab" data-tab="debts"><span class="ico">💳</span>Долги</button>
+    <button class="tab" data-tab="chart"><span class="ico">📈</span>График</button>
+    <button class="tab" data-tab="settings"><span class="ico">⚙️</span>Настройки</button>
+  </nav>
+
+  <dialog id="modal"><div id="modal-body"></div></dialog>
+
+  <script type="module" src="js/app.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(err => console.warn('SW:', err));
+      });
+    }
+  </script>
+</body>
+</html>
