@@ -479,8 +479,9 @@ function openDebtForm(instId) {
   const today = todayISO();
 
   const allPeriods = generatePeriods(today.slice(0, 7) + '-01', horizonEnd());
-  const periodOptions = sel => allPeriods
-    .map(p => `<option value="${p}" ${p === sel ? 'selected' : ''}>${fmtPeriodFull(p)}</option>`).join('');
+  // used — даты, занятые другими строками: их в выпадашке делаем недоступными (без дублей)
+  const periodOptions = (sel, used) => allPeriods
+    .map(p => `<option value="${p}" ${p === sel ? 'selected' : ''} ${used && used.has(p) && p !== sel ? 'disabled' : ''}>${fmtPeriodFull(p)}</option>`).join('');
 
   // Существующая рассрочка: все её платежи (записи + хвост) с нагрузкой периода.
   const payRows = [];
@@ -601,15 +602,21 @@ function openDebtForm(instId) {
   function renderSchedule() {
     const list = $('#sched-list');
     if (!list) return;
+    const used = new Set(schedule.map(s => s.period));
     list.innerHTML = schedule.map((row, i) => `
       <div class="sched-row" data-si="${i}">
-        <select data-sched-period>${periodOptions(row.period)}</select>
+        <select data-sched-period>${periodOptions(row.period, used)}</select>
         ${moneyInput('', row.amount, 'data-sched-amount')}
         <span class="sched-load" data-sched-load></span>
         <button type="button" class="icon-btn danger" data-sched-del title="Убрать платёж">×</button>
       </div>`).join('') || '<div class="empty small">Добавьте платёж кнопкой ниже</div>';
     updatePreview();
   }
+
+  const firstFreePeriod = (after) => {
+    const used = new Set(schedule.map(s => s.period));
+    return allPeriods.find(p => p > after && !used.has(p)) || allPeriods.find(p => !used.has(p));
+  };
 
   if (isNew) {
     regenSchedule();
@@ -619,7 +626,8 @@ function openDebtForm(instId) {
     $('#sched-add').onclick = () => {
       const per = parseMoney(form.perPeriod.value) || 0;
       const last = schedule.length ? schedule[schedule.length - 1].period : form.firstPeriod.value;
-      const next = allPeriods.find(p => p > last) || last;
+      const next = firstFreePeriod(last);
+      if (!next) { alert('Свободных дат в горизонте больше нет.'); return; }
       schedule.push({ period: next, amount: per });
       renderSchedule();
     };
@@ -627,7 +635,12 @@ function openDebtForm(instId) {
     list.addEventListener('change', e => {
       const row = e.target.closest('.sched-row'); if (!row) return;
       const i = Number(row.dataset.si);
-      if (e.target.matches('[data-sched-period]')) { schedule[i].period = e.target.value; updatePreview(); }
+      // даты уникальны: дубль выбрать нельзя (опции disabled), но на всякий — защита
+      if (e.target.matches('[data-sched-period]')) {
+        if (schedule.some((s, j) => j !== i && s.period === e.target.value)) { renderSchedule(); return; }
+        schedule[i].period = e.target.value;
+        renderSchedule();
+      }
     });
     list.addEventListener('input', e => {
       const row = e.target.closest('.sched-row'); if (!row) return;
@@ -701,6 +714,8 @@ function openDebtForm(instId) {
     if (isNew) {
       const plan = schedule.filter(it => it.amount > 0).sort((a, b) => a.period < b.period ? -1 : 1);
       if (!plan.length) { alert('Добавьте хотя бы один платёж в расписание.'); return; }
+      const dates = plan.map(p => p.period);
+      if (new Set(dates).size !== dates.length) { alert('В расписании повторяются даты — сделайте их уникальными.'); return; }
       const total = plan.reduce((s, x) => s + x.amount, 0);
       const rec = {
         id: uid('inst'), name, total, perPeriod: per || plan[0].amount,
