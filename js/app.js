@@ -1140,6 +1140,7 @@ async function renderSettings() {
       await importState(db, await file.text());
       state = await loadState(db);
       render();
+      markDirty(); // если синк включён — выгрузить импортированные данные на сервер
       alert('Импорт выполнен ✓');
     } catch (err) {
       alert('Не получилось: ' + err.message);
@@ -1227,6 +1228,7 @@ async function renderSettings() {
       await importState(db, json);
       state = await loadState(db);
       render();
+      markDirty(); // если синк включён — выгрузить импортированные данные на сервер
       alert('Импорт выполнен ✓');
     } catch (err) {
       alert(err.message);
