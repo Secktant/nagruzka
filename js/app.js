@@ -435,10 +435,10 @@ function renderDebts() {
   const card = s => {
     const pctPaid = s.inst.total > 0 ? Math.min(100, s.paidSum / s.inst.total * 100) : 0;
     return `
-    <section class="card debt clickable" data-debt="${esc(s.inst.id)}">
+    <section class="card debt clickable ${s.underScheduled ? 'under' : ''}" data-debt="${esc(s.inst.id)}">
       <header class="card-head">
         <div class="card-date">${esc(s.inst.name)}${s.inst.bank ? ` <span class="bank-tag">${esc(s.inst.bank)}</span>` : ''}</div>
-        <div class="badge ${s.closed ? 'zone-green' : 'zone-none'}">${s.closed ? 'закрыта ✓' : fmtMoney(s.remaining) + ' осталось'}</div>
+        <div class="badge ${s.closed ? 'zone-green' : s.underScheduled ? 'zone-red' : 'zone-none'}">${s.closed ? 'закрыта ✓' : fmtMoney(s.remaining) + ' осталось'}</div>
       </header>
       <div class="bar"><div class="bar-fill zone-green" style="width:${pctPaid}%"></div></div>
       <div class="stats">
@@ -447,8 +447,9 @@ function renderDebts() {
         ${s.closed
           ? `<div><span class="lbl">Статус</span><span class="val">закрыта</span></div>`
           : `<div><span class="lbl">Следующий</span><span class="val">${s.nextPayment ? fmtMoney(s.nextPayment.amount) + ' · ' + fmtPeriod(s.nextPayment.period) : '—'}</span></div>`}
-        <div><span class="lbl">${s.closed ? 'Закрыта' : 'Закроется'}</span><span class="val">${s.closePeriod ? fmtPeriodFull(s.closePeriod) : '—'}</span></div>
+        <div><span class="lbl">${s.closed ? 'Закрыта' : 'Закроется'}</span><span class="val">${s.underScheduled ? '—' : (s.closePeriod ? fmtPeriodFull(s.closePeriod) : '—')}</span></div>
       </div>
+      ${s.underScheduled ? `<div class="debt-warn">⚠ Расписанием закрыто ${fmtMoney(s.scheduledSum)} из ${fmtMoney(s.inst.total)} — не хватает платежей на <b>${fmtMoney(s.shortfall)}</b>. Откройте и добавьте «+ платёж».</div>` : ''}
     </section>`;
   };
 
@@ -543,6 +544,7 @@ function openDebtForm(instId) {
         ${!p.paid ? `<button type="button" class="icon-btn danger" data-del-dpi="${i}" title="Пропустить платёж">×</button>` : '<span></span>'}
       </div>`).join('') || '<div class="empty small">Платежей пока нет</div>'}
     </div>
+    <button type="button" class="btn small" id="debt-add-pay">+ платёж</button>
     <p class="hint">Суммы можно поправить (банк списал не ровно). «×» — пропустить будущий платёж
     (период сдвинется). «Внесено»/«осталось» пересчитаются после сохранения.</p>` : ''}
     ${isNew ? `
@@ -587,6 +589,22 @@ function openDebtForm(instId) {
         btn.closest('.debt-pay-row').classList.add('skipped');
       };
     });
+    // + платёж к существующей рассрочке: запись на ближайшую свободную дату
+    $('#debt-add-pay').onclick = async () => {
+      const used = new Set(payRows.map(p => p.period));
+      const next = allPeriods.find(p => !used.has(p));
+      if (!next) { alert('Свободных дат в горизонте больше нет.'); return; }
+      const per = inst.perPeriod || 0;
+      const amount = sums.shortfall > 0 ? Math.min(per || sums.shortfall, sums.shortfall) : per;
+      const rec = {
+        id: uid('m'), period: next, kind: 'expense', name: inst.name,
+        amount: amount > 0 ? amount : (per || 0), bank: inst.bank, paid: false, installmentId: inst.id,
+      };
+      state.records.push(rec);
+      state.records.sort((a, b) => a.period < b.period ? -1 : 1);
+      await putRecord(db, rec);
+      closeModal(); render(); openDebtForm(inst.id);  // переоткрыть с обновлёнными данными
+    };
   }
 
   // ── новая: расписание ──
@@ -681,6 +699,9 @@ function openDebtForm(instId) {
     const n = plan.length;
     const closeP = plan[plan.length - 1].period;
     const last = plan[plan.length - 1].amount;
+    const planSum = plan.reduce((s, x) => s + x.amount, 0);
+    const enteredTotal = isNew ? (parseMoney(form.total.value) || planSum) : planSum;
+    const shortfall = Math.round(enteredTotal - planSum);
     const diffs = [];
     if (isNew) {
       for (const day of draftTl.values()) {
@@ -691,8 +712,11 @@ function openDebtForm(instId) {
       }
     }
     box.hidden = false;
+    const head = shortfall > 0
+      ? `<div class="warn">⚠ Расписание покрывает ${fmtMoney(planSum)} из ${fmtMoney(enteredTotal)} — не хватает платежей на <b>${fmtMoney(shortfall)}</b>. Нажмите «↻ авто» или «+ платёж».</div>`
+      : `<div><b>${n}</b> ${plural(n, 'платёж', 'платежа', 'платежей')} · последний ${fmtMoney(last)} · закроется <b>${fmtPeriodFull(closeP)}</b></div>`;
     box.innerHTML = `
-      <div><b>${n}</b> ${plural(n, 'платёж', 'платежа', 'платежей')} · последний ${fmtMoney(last)} · закроется <b>${fmtPeriodFull(closeP)}</b></div>
+      ${head}
       ${diffs.slice(0, 4).map(d => `
         <div class="diff">${fmtPeriod(d.p)}: ${Math.round(d.from * 100)}% → <b class="zone-text-${d.zone.key}">${Math.round(d.to * 100)}% ${d.zone.label}</b></div>`).join('')}
       ${diffs.length > 4 ? `<div class="diff muted">…и ещё ${diffs.length - 4} ${plural(diffs.length - 4, 'период', 'периода', 'периодов')}</div>` : ''}`;
@@ -716,7 +740,11 @@ function openDebtForm(instId) {
       if (!plan.length) { alert('Добавьте хотя бы один платёж в расписание.'); return; }
       const dates = plan.map(p => p.period);
       if (new Set(dates).size !== dates.length) { alert('В расписании повторяются даты — сделайте их уникальными.'); return; }
-      const total = plan.reduce((s, x) => s + x.amount, 0);
+      const planSum = plan.reduce((s, x) => s + x.amount, 0);
+      const total = parseMoney(form.total.value) || planSum;  // общая сумма = введённая
+      if (planSum < total - 0.5) {
+        if (!confirm(`Расписание покрывает только ${fmtMoney(planSum)} из ${fmtMoney(total)} — не хватает платежей на ${fmtMoney(total - planSum)}.\n\nСохранить как есть? Платежи можно добавить позже.`)) return;
+      }
       const rec = {
         id: uid('inst'), name, total, perPeriod: per || plan[0].amount,
         bank: selectedBank(), firstPeriod: plan[0].period, plan,

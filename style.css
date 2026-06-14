@@ -15,34 +15,23 @@
 
 * { box-sizing: border-box; }
 
-html { height: 100%; }
 body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
   font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
-  /* app-раскладка: экран на всю высоту, тулбар в потоке внизу (не fixed —
-     иначе на iOS standalone уезжает в зависимости от скролла экрана) */
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  height: 100dvh;
-  overflow: hidden;
 }
 
 .shell {
-  flex: 1 1 auto;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  width: 100%;
   max-width: 920px;
   margin: 0 auto;
-  /* safe-area: не наезжаем на чёлку/Dynamic Island и боковые скругления */
+  /* safe-area: не наезжаем на чёлку/Dynamic Island и боковые скругления;
+     снизу — место под фиксированный тулбар */
   padding:
     calc(20px + env(safe-area-inset-top))
     calc(16px + env(safe-area-inset-right))
-    24px
+    calc(84px + env(safe-area-inset-bottom))
     calc(16px + env(safe-area-inset-left));
 }
 
@@ -358,6 +347,19 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 }
 .preview-box .diff { margin-top: 4px; color: var(--muted); }
 .preview-box .diff.muted { font-size: 12px; }
+.preview-box .warn { color: #ffb38a; line-height: 1.4; }
+.preview-box .warn b { color: var(--red); }
+
+.card.debt.under { border-color: rgba(226, 109, 90, .45); }
+.debt-warn {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: #ffb38a;
+  line-height: 1.4;
+}
+.debt-warn b { color: var(--red); }
 .zone-text-green { color: var(--green); }
 .zone-text-yellow { color: var(--yellow); }
 .zone-text-red { color: var(--red); }
@@ -456,7 +458,8 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .year-nav button[disabled] { opacity: .35; cursor: default; }
 
 .tabbar {
-  flex: 0 0 auto;        /* в потоке, всегда у нижней кромки экрана */
+  position: fixed;
+  bottom: 0; left: 0; right: 0;
   display: flex;
   justify-content: space-around;
   background: rgba(14,17,22,.92);

@@ -185,20 +185,26 @@ export function installmentSummaries(state, timeline) {
     const linked = state.records.filter(r => r.installmentId === inst.id);
     const paidSum = linked.filter(r => r.paid).reduce((s, r) => s + r.amount, 0);
     const paidCount = linked.filter(r => r.paid).length;
-    let totalCount = 0, lastPeriod = null, nextPayment = null;
+    let totalCount = 0, lastPeriod = null, nextPayment = null, scheduledSum = 0;
     for (const day of timeline.values()) {
       for (const p of day.payments) {
         if (p.installmentId !== inst.id) continue;
         totalCount++;
+        scheduledSum += p.amount;        // сколько всего расписано платежами
         lastPeriod = day.period;
         if (!p.paid && !nextPayment) nextPayment = { period: day.period, amount: p.amount };
       }
     }
     // оплаченные записи до начала ленты тоже считаются
-    totalCount += linked.filter(r => r.period < state.settings.startPeriod).length;
+    for (const r of linked) {
+      if (r.period < state.settings.startPeriod) { totalCount++; scheduledSum += r.amount; }
+    }
     const remaining = Math.max(0, inst.total - paidSum);
+    // недопокрытие: расписанием закрыто меньше, чем общая сумма долга
+    const shortfall = Math.max(0, Math.round(inst.total - scheduledSum));
     out.push({
-      inst, paidSum, paidCount, totalCount, remaining,
+      inst, paidSum, paidCount, totalCount, remaining, scheduledSum,
+      shortfall, underScheduled: shortfall > 0,
       closed: remaining <= 0,
       closePeriod: lastPeriod,
       nextPayment,
