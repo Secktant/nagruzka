@@ -1,7 +1,7 @@
 // Service worker «Нагрузки». Стратегия: network-first с откатом в кэш —
 // онлайн всегда свежие файлы, офлайн работает из кэша.
 // Версию кэша поднимать при изменении набора файлов.
-const CACHE = 'nagruzka-v9';
+const CACHE = 'nagruzka-v10';
 const ASSETS = [
   './',
   'index.html',

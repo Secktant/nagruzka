@@ -44,8 +44,11 @@
     <div id="modal-body"></div>
   </dialog>
 
-  <!-- Argon2 (hash-wasm, UMD): задаёт globalThis.hashwasm для js/crypto.js -->
-  <script src="js/vendor/argon2.umd.min.js"></script>
+  <!-- Argon2 (hash-wasm 4.12.0, UMD): задаёт globalThis.hashwasm для js/crypto.js.
+       integrity (SRI): браузер сверит хеш и НЕ выполнит файл, если он изменён.
+       SHA-256: dcec617a2e1b700fa132d1583a186cb70611113395e869f2dd6cc82b415d3094 -->
+  <script src="js/vendor/argon2.umd.min.js"
+          integrity="sha384-tP0Wy54CKmng7i9EoTlPySD0hBx6Octj0VS6MfwlnUu111MPa+JLm0CCbep6XJ1W"></script>
   <script type="module" src="js/app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
