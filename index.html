@@ -44,6 +44,8 @@
     <div id="modal-body"></div>
   </dialog>
 
+  <!-- Argon2 (hash-wasm, UMD): задаёт globalThis.hashwasm для js/crypto.js -->
+  <script src="js/vendor/argon2.umd.min.js"></script>
   <script type="module" src="js/app.js"></script>
   <script>
     if ('serviceWorker' in navigator) {

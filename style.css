@@ -312,6 +312,16 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .btn.danger:hover { border-color: var(--red); }
 .btn.small { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
 
+.keyfile-status {
+  font-size: 13px; padding: 8px 12px; border-radius: 10px;
+  border: 1px solid var(--border); background: var(--surface-2);
+}
+.keyfile-status.on  { color: var(--green); border-color: rgba(63,185,106,.4); }
+.keyfile-status.off { color: var(--muted); }
+.keyfile-status code, .hint code {
+  background: var(--surface-2); padding: 1px 5px; border-radius: 5px; font-size: 12px;
+}
+
 /* ── денежный ввод со стрелками ── */
 .num { position: relative; display: block; }
 .income-row .num, .debt-pay-row .num, .sched-row .num { margin: 0; }

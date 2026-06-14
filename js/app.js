@@ -2,11 +2,13 @@ import { SEED } from './seed.js';
 import {
   initStore, loadState, putRecord, deleteRecord, putRegular, deleteRegular,
   putInstallment, deleteInstallment, putSettings, exportState, importState,
+  getKeyfile, setKeyfile, clearKeyfile,
 } from './db.js';
 import {
   buildTimeline, installmentSummaries, generatePeriods, monthlyLoads, yearlyLoads,
   fmtMoney, groupThousands, fmtPeriod, fmtMonth, loadZone,
 } from './engine.js';
+import { generateKeyfile, encryptText, decryptToText, inspect } from './crypto.js';
 
 let db, state, timeline;
 const TODAY = new Date();
@@ -962,10 +964,11 @@ const MON3 = ['янв','фев','мар','апр','май','июн','июл','а
 
 // ───────────────────────── настройки ─────────────────────────
 
-function renderSettings() {
+async function renderSettings() {
   const regs = state.regulars.filter(r => r.kind === 'expense');
   const salary = state.regulars.find(r => r.kind === 'income');
   const schedName = { both: 'каждый период', mid: '15-е число', end: 'конец месяца' };
+  const kf = await getKeyfile(db); // Uint8Array | undefined
 
   $('#view-settings').innerHTML = `
     <div class="section-head"><h2>Настройки</h2></div>
@@ -1009,8 +1012,34 @@ function renderSettings() {
         <button class="btn" id="import-btn">⬆ Импорт из файла</button>
         <input type="file" id="import-file" accept=".json" hidden>
       </div>
-      <p class="hint">Резервная копия — обычный JSON. Храните в надёжном месте: при потере данных
-      восстановиться можно только из неё. Шифрование и синхронизация — этап 4.</p>
+      <p class="hint">Резервная копия — обычный JSON, без пароля. Удобно для бэкапа на этом
+      устройстве; не передавайте такой файл через сеть.</p>
+    </section>
+
+    <section class="card">
+      <h3>Зашифрованная копия · синхронизация</h3>
+      <div class="keyfile-status ${kf ? 'on' : 'off'}">
+        ${kf
+          ? 'keyfile активен — второй фактор включён'
+          : 'keyfile не задан — копия защищена только паролем'}
+      </div>
+      <div class="form-actions" style="justify-content:flex-start;margin-top:8px">
+        ${kf
+          ? `<button class="btn" id="kf-download">⬇ Скачать keyfile</button>
+             <button class="btn danger" id="kf-clear">Удалить keyfile</button>`
+          : `<button class="btn" id="kf-create">Создать keyfile</button>`}
+        <button class="btn" id="kf-load">⬆ Загрузить keyfile</button>
+        <input type="file" id="kf-file" accept=".key" hidden>
+      </div>
+      <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
+        <button class="btn primary" id="enc-export-btn">🔒 Зашифровать и сохранить</button>
+        <button class="btn" id="enc-import-btn">🔓 Загрузить зашифрованную</button>
+        <input type="file" id="enc-import-file" accept=".nz" hidden>
+      </div>
+      <p class="hint">Файл <code>.nz</code> зашифрован Argon2id + AES-256-GCM. Можно слать через
+      AirDrop / iCloud Drive. <b>keyfile</b> — отдельный файл-ключ: держите его только на своих
+      устройствах и НИКОГДА не отправляйте вместе с <code>.nz</code>. Пароль нигде не хранится —
+      запишите его в менеджер паролей, без него копию не открыть.</p>
     </section>`;
 
   $('#salary-input').addEventListener('input', async e => {
@@ -1064,6 +1093,90 @@ function renderSettings() {
       alert('Импорт выполнен ✓');
     } catch (err) {
       alert('Не получилось: ' + err.message);
+    }
+  });
+
+  // --- keyfile (второй фактор) ---
+  const downloadBytes = (bytes, name, type = 'application/octet-stream') => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([bytes], { type }));
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
+  if ($('#kf-create')) $('#kf-create').onclick = async () => {
+    const bytes = generateKeyfile();
+    await setKeyfile(db, bytes);
+    downloadBytes(bytes, 'nagruzka.key');
+    alert('keyfile создан и скачан.\n\nПерекиньте nagruzka.key на второе устройство (AirDrop) и там нажмите «Загрузить keyfile». Этот файл — НЕ для отправки вместе с зашифрованной копией.');
+    render();
+  };
+  if ($('#kf-download')) $('#kf-download').onclick = () => downloadBytes(kf, 'nagruzka.key');
+  if ($('#kf-clear')) $('#kf-clear').onclick = async () => {
+    if (!confirm('Удалить keyfile с этого устройства? Зашифрованные с ним копии перестанут открываться здесь, пока не загрузите keyfile снова.')) return;
+    await clearKeyfile(db);
+    render();
+  };
+  $('#kf-load').onclick = () => $('#kf-file').click();
+  $('#kf-file').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    if (bytes.length !== 32) {
+      alert('Это не похоже на keyfile «Нагрузки» (ожидается 32 байта).');
+      return;
+    }
+    await setKeyfile(db, bytes);
+    alert('keyfile загружен ✓');
+    render();
+  });
+
+  // --- зашифрованная копия ---
+  $('#enc-export-btn').onclick = async () => {
+    const pass = prompt('Пароль для шифрования (запишите его — без него файл не открыть):');
+    if (!pass) return;
+    const again = prompt('Повторите пароль:');
+    if (pass !== again) { alert('Пароли не совпали.'); return; }
+    try {
+      const bytes = await encryptText(exportState(state), pass, kf);
+      downloadBytes(bytes, `nagruzka-${todayISO()}.nz`);
+      alert('Зашифрованная копия сохранена ✓' + (kf ? '\n(с keyfile)' : '\n(без keyfile — только пароль)'));
+    } catch (err) {
+      alert('Не получилось: ' + err.message);
+    }
+  };
+
+  $('#enc-import-btn').onclick = () => $('#enc-import-file').click();
+  $('#enc-import-file').addEventListener('change', async e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const meta = inspect(bytes); // проверка сигнатуры + нужен ли keyfile
+      if (meta.needsKeyfile && !kf) {
+        alert('Этот файл зашифрован с keyfile, а на устройстве его нет. Сначала загрузите keyfile.');
+        return;
+      }
+      const pass = prompt('Пароль от зашифрованной копии:');
+      if (!pass) return;
+      const json = await decryptToText(bytes, pass, meta.needsKeyfile ? kf : null);
+      // что внутри — показываем перед заменой
+      const data = JSON.parse(json);
+      const when = (data.exportedAt || '').slice(0, 10);
+      const ok = confirm(
+        `Расшифровано ✓\nДата копии: ${when || '—'}\n` +
+        `Записей: ${data.records?.length ?? 0}, рассрочек: ${data.installments?.length ?? 0}\n\n` +
+        'Импорт ЗАМЕНИТ все текущие данные. Перед заменой скачается бэкап текущего состояния. Продолжить?'
+      );
+      if (!ok) return;
+      downloadBytes(exportState(state), `nagruzka-before-import-${todayISO()}.json`, 'application/json');
+      await importState(db, json);
+      state = await loadState(db);
+      render();
+      alert('Импорт выполнен ✓');
+    } catch (err) {
+      alert(err.message);
     }
   });
 }

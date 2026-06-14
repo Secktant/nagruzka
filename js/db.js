@@ -78,6 +78,11 @@ export const putInstallment = (db, r) => tx(db, 'installments', 'readwrite', s =
 export const deleteInstallment = (db, id) => tx(db, 'installments', 'readwrite', s => s.delete(id));
 export const putSettings = (db, settings) => tx(db, 'kv', 'readwrite', s => s.put(settings, 'settings'));
 
+// keyfile — второй фактор шифрования. Хранится в kv как Uint8Array, в экспорт НЕ попадает.
+export const getKeyfile = (db) => getKV(db, 'keyfile');
+export const setKeyfile = (db, bytes) => tx(db, 'kv', 'readwrite', s => s.put(bytes, 'keyfile'));
+export const clearKeyfile = (db) => tx(db, 'kv', 'readwrite', s => s.delete('keyfile'));
+
 export function exportState(state) {
   return JSON.stringify({
     app: 'nagruzka', version: 1, exportedAt: new Date().toISOString(),
