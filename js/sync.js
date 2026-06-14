@@ -144,11 +144,23 @@ export class SyncEngine {
 
   start() {
     this.stop();
+    // мгновенная сверка при возврате в приложение (фокус/появление вкладки)
+    this._onVisible = () => { if (document.visibilityState === 'visible') this.pullAndApply(); };
+    document.addEventListener('visibilitychange', this._onVisible);
+    window.addEventListener('focus', this._onVisible);
+    // плюс фоновый опрос, пока вкладка активна
     this._timer = setInterval(() => {
       if (document.visibilityState === 'visible') this.pullAndApply();
     }, this.pollMs);
   }
-  stop() { clearInterval(this._timer); this._timer = null; }
+  stop() {
+    clearInterval(this._timer); this._timer = null;
+    if (this._onVisible) {
+      document.removeEventListener('visibilitychange', this._onVisible);
+      window.removeEventListener('focus', this._onVisible);
+      this._onVisible = null;
+    }
+  }
 }
 
 export const _b64 = b64, _b64url = b64url; // экспорт для тестов
