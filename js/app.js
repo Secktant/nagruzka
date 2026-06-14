@@ -1048,12 +1048,12 @@ async function renderSettings() {
              <button class="btn danger" id="kf-clear">Удалить keyfile</button>`
           : `<button class="btn" id="kf-create">Создать keyfile</button>`}
         <button class="btn" id="kf-load">⬆ Загрузить keyfile</button>
-        <input type="file" id="kf-file" accept=".key" hidden>
+        <input type="file" id="kf-file" hidden>
       </div>
       <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
         <button class="btn primary" id="enc-export-btn">🔒 Зашифровать и сохранить</button>
         <button class="btn" id="enc-import-btn">🔓 Загрузить зашифрованную</button>
-        <input type="file" id="enc-import-file" accept=".nz" hidden>
+        <input type="file" id="enc-import-file" hidden>
       </div>
       <p class="hint">Файл <code>.nz</code> зашифрован Argon2id + AES-256-GCM. Можно слать через
       AirDrop / iCloud Drive. <b>keyfile</b> — отдельный файл-ключ: держите его только на своих
@@ -1077,7 +1077,7 @@ async function renderSettings() {
              <button class="btn danger" id="sid-clear">Удалить</button>`
           : `<button class="btn" id="sid-create">Создать Sync ID</button>`}
         <button class="btn" id="sid-load">⬆ Загрузить Sync ID</button>
-        <input type="file" id="sid-file" accept=".syncid,.txt" hidden>
+        <input type="file" id="sid-file" hidden>
       </div>
 
       <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
