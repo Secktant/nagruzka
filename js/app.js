@@ -7,6 +7,7 @@ import {
   putSettings as _putSettings,
   getKeyfile, setKeyfile, clearKeyfile,
   getSyncId, setSyncId, clearSyncId,
+  getSyncKey, setSyncKey, clearSyncKey,
 } from './db.js';
 import {
   buildTimeline, installmentSummaries, generatePeriods, monthlyLoads, yearlyLoads,
@@ -1088,8 +1089,9 @@ async function renderSettings() {
       <p class="hint">
         ${!sid ? 'Сначала создай Sync ID (на втором устройстве — загрузи тот же файл). ' : ''}
         ${!kf ? '<b>Нужен keyfile</b> (выше) — без него синк не расшифровать. ' : ''}
-        Включение спросит пароль один раз за сессию (нигде не хранится). На сервер уезжает только
-        шифротекст — Supabase данные прочитать не может. Изменения подхватываются автоматически.</p>
+        Включение спросит пароль и запомнит синк на этом устройстве (сам пароль не хранится). На
+        сервер уезжает только шифротекст — Supabase данные прочитать не может. Изменения
+        подхватываются автоматически.</p>
     </section>` : ''}`;
 
   $('#salary-input').addEventListener('input', async e => {
@@ -1253,6 +1255,7 @@ async function renderSettings() {
       if (syncEngine) { syncEngine.stop(); syncEngine.key = null; }
       syncStatus = 'off';
       await clearSyncId(db);
+      await clearSyncKey(db);
       render();
     };
     $('#sid-load').onclick = () => $('#sid-file').click();
@@ -1267,11 +1270,12 @@ async function renderSettings() {
     });
 
     if ($('#sync-on')) $('#sync-on').onclick = async () => {
-      const pass = prompt('Пароль синхронизации (вводится один раз за сессию, нигде не хранится):');
+      const pass = prompt('Пароль синхронизации (запомнится на этом устройстве; сам пароль не хранится):');
       if (!pass) return;
       try {
         syncStatus = 'syncing'; updateSyncStatusUI();
         await syncEngine.unlock(sid, pass);   // деривация ключа + первая сверка с сервером
+        await setSyncKey(db, { key: syncEngine.key, salt: syncEngine.salt }); // запомнить на устройстве
         syncEngine.start();                    // фоновый опрос
         render();
       } catch (err) {
@@ -1280,10 +1284,11 @@ async function renderSettings() {
         render();
       }
     };
-    if ($('#sync-off')) $('#sync-off').onclick = () => {
+    if ($('#sync-off')) $('#sync-off').onclick = async () => {
       syncEngine.stop();
       syncEngine.key = null;
       syncStatus = 'off';
+      await clearSyncKey(db);   // забыть ключ — при следующем включении спросит пароль
       render();
     };
   }
@@ -1402,7 +1407,21 @@ async function main() {
   db = await initStore(SEED);
   state = await loadState(db);
   currentKeyfile = await getKeyfile(db);
-  if (syncConfigured()) syncEngine = createSyncEngine();
+  if (syncConfigured()) {
+    syncEngine = createSyncEngine();
+    // «Запомнить на устройстве»: если ключ сохранён — поднимаем синк без ввода пароля.
+    const sid = await getSyncId(db);
+    const saved = await getSyncKey(db);
+    if (sid && saved?.key) {
+      syncEngine.id = sid;
+      syncEngine.key = saved.key;
+      syncEngine.salt = saved.salt;
+      syncEngine.version = 0;      // подтянем актуальную версию из сервера ниже
+      syncStatus = 'synced';
+      syncEngine.start();
+      syncEngine.pullAndApply();
+    }
+  }
   $('#prev-month').addEventListener('click', () => shiftMonth(-1));
   $('#next-month').addEventListener('click', () => shiftMonth(1));
   $$('.tab').forEach(t => t.addEventListener('click', () => { view.tab = t.dataset.tab; render(); }));

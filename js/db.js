@@ -88,6 +88,12 @@ export const getSyncId = (db) => getKV(db, 'syncId');
 export const setSyncId = (db, str) => tx(db, 'kv', 'readwrite', s => s.put(str, 'syncId'));
 export const clearSyncId = (db) => tx(db, 'kv', 'readwrite', s => s.delete('syncId'));
 
+// Сессионный ключ синка для «запомнить на устройстве»: { key: CryptoKey (неэкспортируемый), salt }.
+// Хранится в kv, в экспорт НЕ попадает. Позволяет возобновлять синк без повторного ввода пароля.
+export const getSyncKey = (db) => getKV(db, 'syncKey');
+export const setSyncKey = (db, obj) => tx(db, 'kv', 'readwrite', s => s.put(obj, 'syncKey'));
+export const clearSyncKey = (db) => tx(db, 'kv', 'readwrite', s => s.delete('syncKey'));
+
 export function exportState(state) {
   return JSON.stringify({
     app: 'nagruzka', version: 1, exportedAt: new Date().toISOString(),
