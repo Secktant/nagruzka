@@ -70,6 +70,42 @@ export function inspect(bytes) {
   return { needsKeyfile: (b[6] & FLAG_KEYFILE) !== 0 };
 }
 
+// --- для синхронизации (этап 4b) ---
+// В файловом сценарии ключ деривируется на каждый файл (своя соль). Для синка это дорого:
+// Argon2 ~1 c на каждую отправку. Поэтому ключ деривируется ОДИН раз за сессию с
+// фиксированной солью (хранится на сервере, не секрет), кэшируется в памяти, а каждая
+// выгрузка/загрузка — это быстрый AES-GCM с разовым IV.
+
+export const SYNC_SALT_LEN = 16;
+export function randomSalt() { return crypto.getRandomValues(new Uint8Array(SYNC_SALT_LEN)); }
+
+// Сессионный ключ: Argon2id(пароль ⨁ keyfile, salt). Зовётся один раз при разблокировке синка.
+export const deriveKey = deriveAesKey;
+
+// seal: text -> Uint8Array(iv(12) | ciphertext). Быстро, Argon2 не вызывается.
+export async function sealGCM(key, text) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, te.encode(text)));
+  const out = new Uint8Array(12 + ct.length);
+  out.set(iv, 0);
+  out.set(ct, 12);
+  return out;
+}
+
+// open: Uint8Array(iv | ciphertext) -> text. Бросает, если ключ не подошёл.
+export async function openGCM(key, bytes) {
+  const b = new Uint8Array(bytes);
+  const iv = b.slice(0, 12);
+  const ct = b.slice(12);
+  let plain;
+  try {
+    plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+  } catch {
+    throw new Error('Не удалось расшифровать снимок: неверный пароль/keyfile');
+  }
+  return td.decode(plain);
+}
+
 // bytes: содержимое файла. Возвращает расшифрованную строку (JSON).
 export async function decryptToText(bytes, password, keyfileBytes) {
   const b = new Uint8Array(bytes);

@@ -83,6 +83,11 @@ export const getKeyfile = (db) => getKV(db, 'keyfile');
 export const setKeyfile = (db, bytes) => tx(db, 'kv', 'readwrite', s => s.put(bytes, 'keyfile'));
 export const clearKeyfile = (db) => tx(db, 'kv', 'readwrite', s => s.delete('keyfile'));
 
+// Sync ID — локатор «ячейки» на сервере синка (этап 4b). Тоже в kv, в экспорт НЕ попадает.
+export const getSyncId = (db) => getKV(db, 'syncId');
+export const setSyncId = (db, str) => tx(db, 'kv', 'readwrite', s => s.put(str, 'syncId'));
+export const clearSyncId = (db) => tx(db, 'kv', 'readwrite', s => s.delete('syncId'));
+
 export function exportState(state) {
   return JSON.stringify({
     app: 'nagruzka', version: 1, exportedAt: new Date().toISOString(),

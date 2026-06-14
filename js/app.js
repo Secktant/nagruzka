@@ -1,16 +1,34 @@
 import { SEED } from './seed.js';
 import {
-  initStore, loadState, putRecord, deleteRecord, putRegular, deleteRegular,
-  putInstallment, deleteInstallment, putSettings, exportState, importState,
+  initStore, loadState, exportState, importState,
+  putRecord as _putRecord, deleteRecord as _deleteRecord,
+  putRegular as _putRegular, deleteRegular as _deleteRegular,
+  putInstallment as _putInstallment, deleteInstallment as _deleteInstallment,
+  putSettings as _putSettings,
   getKeyfile, setKeyfile, clearKeyfile,
+  getSyncId, setSyncId, clearSyncId,
 } from './db.js';
 import {
   buildTimeline, installmentSummaries, generatePeriods, monthlyLoads, yearlyLoads,
   fmtMoney, groupThousands, fmtPeriod, fmtMonth, loadZone,
 } from './engine.js';
 import { generateKeyfile, encryptText, decryptToText, inspect } from './crypto.js';
+import { SyncEngine, isConfigured as syncConfigured, generateSyncId, isValidSyncId } from './sync.js';
+
+// Обёртки над записью в БД: после любого сохранения помечаем «грязным» для синка.
+const markDirty = () => syncEngine?.notifyLocalChange();
+const putRecord = (...a) => _putRecord(...a).then(r => (markDirty(), r));
+const deleteRecord = (...a) => _deleteRecord(...a).then(r => (markDirty(), r));
+const putRegular = (...a) => _putRegular(...a).then(r => (markDirty(), r));
+const deleteRegular = (...a) => _deleteRegular(...a).then(r => (markDirty(), r));
+const putInstallment = (...a) => _putInstallment(...a).then(r => (markDirty(), r));
+const deleteInstallment = (...a) => _deleteInstallment(...a).then(r => (markDirty(), r));
+const putSettings = (...a) => _putSettings(...a).then(r => (markDirty(), r));
 
 let db, state, timeline;
+let syncEngine = null;       // движок синка (null пока не настроен)
+let currentKeyfile = null;   // кэш keyfile в памяти (для движка, который читает синхронно)
+let syncStatus = 'off';      // off | locked | syncing | synced | offline | conflict | error
 const TODAY = new Date();
 let view = { y: TODAY.getFullYear(), m: TODAY.getMonth() + 1, tab: 'periods', chartYear: TODAY.getFullYear() };
 
@@ -969,6 +987,7 @@ async function renderSettings() {
   const salary = state.regulars.find(r => r.kind === 'income');
   const schedName = { both: 'каждый период', mid: '15-е число', end: 'конец месяца' };
   const kf = await getKeyfile(db); // Uint8Array | undefined
+  const sid = await getSyncId(db); // base64url-строка | undefined
 
   $('#view-settings').innerHTML = `
     <div class="section-head"><h2>Настройки</h2></div>
@@ -1038,9 +1057,40 @@ async function renderSettings() {
       </div>
       <p class="hint">Файл <code>.nz</code> зашифрован Argon2id + AES-256-GCM. Можно слать через
       AirDrop / iCloud Drive. <b>keyfile</b> — отдельный файл-ключ: держите его только на своих
-      устройствах и НИКОГДА не отправляйте вместе с <code>.nz</code>. Пароль нигде не хранится —
-      запишите его в менеджер паролей, без него копию не открыть.</p>
-    </section>`;
+      устройствах. Для разовой настройки AirDrop — ок; для регулярной пересылки через почту/облако
+      keyfile вместе с <code>.nz</code> не шлите. Пароль нигде не хранится — запишите его в
+      менеджер паролей, без него копию не открыть.</p>
+    </section>
+
+    ${syncConfigured() ? `
+    <section class="card">
+      <h3>Синхронизация · realtime</h3>
+      <div id="sync-status" class="keyfile-status"></div>
+
+      <div class="lbl-like" style="margin-top:12px">Sync ID</div>
+      <div class="keyfile-status ${sid ? 'on' : 'off'}">
+        ${sid ? 'задан: <code>' + esc(sid.slice(0, 10)) + '…</code>' : 'не задан — нужен для связи устройств'}
+      </div>
+      <div class="form-actions" style="justify-content:flex-start;margin-top:8px">
+        ${sid
+          ? `<button class="btn" id="sid-download">⬇ Скачать Sync ID</button>
+             <button class="btn danger" id="sid-clear">Удалить</button>`
+          : `<button class="btn" id="sid-create">Создать Sync ID</button>`}
+        <button class="btn" id="sid-load">⬆ Загрузить Sync ID</button>
+        <input type="file" id="sid-file" accept=".syncid,.txt" hidden>
+      </div>
+
+      <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
+        ${(syncStatus === 'synced' || syncStatus === 'syncing')
+          ? `<button class="btn" id="sync-off">Выключить синхронизацию</button>`
+          : `<button class="btn primary" id="sync-on" ${(!sid || !kf) ? 'disabled' : ''}>▶ Включить синхронизацию</button>`}
+      </div>
+      <p class="hint">
+        ${!sid ? 'Сначала создай Sync ID (на втором устройстве — загрузи тот же файл). ' : ''}
+        ${!kf ? '<b>Нужен keyfile</b> (выше) — без него синк не расшифровать. ' : ''}
+        Включение спросит пароль один раз за сессию (нигде не хранится). На сервер уезжает только
+        шифротекст — Supabase данные прочитать не может. Изменения подхватываются автоматически.</p>
+    </section>` : ''}`;
 
   $('#salary-input').addEventListener('input', async e => {
     const v = parseMoney(e.target.value);
@@ -1108,6 +1158,7 @@ async function renderSettings() {
   if ($('#kf-create')) $('#kf-create').onclick = async () => {
     const bytes = generateKeyfile();
     await setKeyfile(db, bytes);
+    currentKeyfile = bytes;
     downloadBytes(bytes, 'nagruzka.key');
     alert('keyfile создан и скачан.\n\nПерекиньте nagruzka.key на второе устройство (AirDrop) и там нажмите «Загрузить keyfile». Этот файл — НЕ для отправки вместе с зашифрованной копией.');
     render();
@@ -1116,6 +1167,7 @@ async function renderSettings() {
   if ($('#kf-clear')) $('#kf-clear').onclick = async () => {
     if (!confirm('Удалить keyfile с этого устройства? Зашифрованные с ним копии перестанут открываться здесь, пока не загрузите keyfile снова.')) return;
     await clearKeyfile(db);
+    currentKeyfile = null;
     render();
   };
   $('#kf-load').onclick = () => $('#kf-file').click();
@@ -1128,6 +1180,7 @@ async function renderSettings() {
       return;
     }
     await setKeyfile(db, bytes);
+    currentKeyfile = bytes;
     alert('keyfile загружен ✓');
     render();
   });
@@ -1179,6 +1232,59 @@ async function renderSettings() {
       alert(err.message);
     }
   });
+
+  // --- синхронизация (этап 4b) ---
+  if (syncConfigured()) {
+    updateSyncStatusUI();
+    if (!syncEngine) syncEngine = createSyncEngine();
+
+    if ($('#sid-create')) $('#sid-create').onclick = async () => {
+      const id = generateSyncId();
+      await setSyncId(db, id);
+      downloadBytes(id, 'nagruzka.syncid', 'text/plain');
+      alert('Sync ID создан и скачан.\n\nПерекинь nagruzka.syncid на второе устройство (AirDrop) и там «Загрузить Sync ID» — это свяжет их в одну ячейку.');
+      render();
+    };
+    if ($('#sid-download')) $('#sid-download').onclick = () => downloadBytes(sid, 'nagruzka.syncid', 'text/plain');
+    if ($('#sid-clear')) $('#sid-clear').onclick = async () => {
+      if (!confirm('Удалить Sync ID с этого устройства? Синхронизация здесь отключится.')) return;
+      if (syncEngine) { syncEngine.stop(); syncEngine.key = null; }
+      syncStatus = 'off';
+      await clearSyncId(db);
+      render();
+    };
+    $('#sid-load').onclick = () => $('#sid-file').click();
+    $('#sid-file').addEventListener('change', async e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const txt = (await file.text()).trim();
+      if (!isValidSyncId(txt)) { alert('Это не похоже на Sync ID «Нагрузки».'); return; }
+      await setSyncId(db, txt);
+      alert('Sync ID загружен ✓');
+      render();
+    });
+
+    if ($('#sync-on')) $('#sync-on').onclick = async () => {
+      const pass = prompt('Пароль синхронизации (вводится один раз за сессию, нигде не хранится):');
+      if (!pass) return;
+      try {
+        syncStatus = 'syncing'; updateSyncStatusUI();
+        await syncEngine.unlock(sid, pass);   // деривация ключа + первая сверка с сервером
+        syncEngine.start();                    // фоновый опрос
+        render();
+      } catch (err) {
+        syncStatus = 'off';
+        alert(err.message || 'Не удалось включить синхронизацию');
+        render();
+      }
+    };
+    if ($('#sync-off')) $('#sync-off').onclick = () => {
+      syncEngine.stop();
+      syncEngine.key = null;
+      syncStatus = 'off';
+      render();
+    };
+  }
 }
 
 function openRegularForm(regId) {
@@ -1263,9 +1369,38 @@ function shiftMonth(delta) {
   render();
 }
 
+function updateSyncStatusUI() {
+  const el = $('#sync-status');
+  if (!el) return;
+  const map = {
+    off: ['—', ''], locked: ['🔒 заблокировано', 'off'],
+    syncing: ['⟳ синхронизация…', 'on'], synced: ['✓ синхронизировано', 'on'],
+    offline: ['⚠ сервер недоступен', 'warn'], conflict: ['⚠ был конфликт, взято свежее', 'warn'],
+    error: ['⚠ ошибка', 'warn'],
+  };
+  const [text, cls] = map[syncStatus] || ['—', ''];
+  el.textContent = text;
+  el.className = 'keyfile-status ' + cls;
+}
+
+function createSyncEngine() {
+  return new SyncEngine({
+    getStateJSON: () => exportState(state),
+    applyStateJSON: async (json) => {
+      await importState(db, json);        // пишет напрямую, не через обёртки — без эха
+      state = await loadState(db);
+      render();
+    },
+    getKeyfile: () => currentKeyfile || null,
+    onStatus: (s) => { syncStatus = s; updateSyncStatusUI(); },
+  });
+}
+
 async function main() {
   db = await initStore(SEED);
   state = await loadState(db);
+  currentKeyfile = await getKeyfile(db);
+  if (syncConfigured()) syncEngine = createSyncEngine();
   $('#prev-month').addEventListener('click', () => shiftMonth(-1));
   $('#next-month').addEventListener('click', () => shiftMonth(1));
   $$('.tab').forEach(t => t.addEventListener('click', () => { view.tab = t.dataset.tab; render(); }));

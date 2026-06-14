@@ -311,6 +311,8 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .btn.danger { color: var(--red); }
 .btn.danger:hover { border-color: var(--red); }
 .btn.small { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:disabled:hover { border-color: var(--border); filter: none; }
 
 .keyfile-status {
   font-size: 13px; padding: 8px 12px; border-radius: 10px;
