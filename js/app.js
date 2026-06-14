@@ -1068,17 +1068,17 @@ async function renderSettings() {
       <h3>Синхронизация · realtime</h3>
       <div id="sync-status" class="keyfile-status"></div>
 
-      <div class="lbl-like" style="margin-top:12px">Sync ID</div>
-      <div class="keyfile-status ${sid ? 'on' : 'off'}">
-        ${sid ? 'задан: <code>' + esc(sid.slice(0, 10)) + '…</code>' : 'не задан — нужен для связи устройств'}
-      </div>
+      <div class="lbl-like" style="margin-top:12px">Sync ID — должен СОВПАДАТЬ на обоих устройствах</div>
+      ${sid
+        ? `<input id="sid-show" class="num" readonly value="${esc(sid)}"
+             style="width:100%;font-family:ui-monospace,monospace;font-size:12px;letter-spacing:.3px">`
+        : `<div class="keyfile-status off">не задан — нужен для связи устройств</div>`}
       <div class="form-actions" style="justify-content:flex-start;margin-top:8px">
         ${sid
-          ? `<button class="btn" id="sid-download">⬇ Скачать Sync ID</button>
+          ? `<button class="btn" id="sid-copy">📋 Скопировать</button>
              <button class="btn danger" id="sid-clear">Удалить</button>`
           : `<button class="btn" id="sid-create">Создать Sync ID</button>`}
-        <button class="btn" id="sid-load">⬆ Загрузить Sync ID</button>
-        <input type="file" id="sid-file" hidden>
+        <button class="btn" id="sid-paste">Вставить Sync ID</button>
       </div>
 
       <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
@@ -1087,7 +1087,7 @@ async function renderSettings() {
           : `<button class="btn primary" id="sync-on" ${(!sid || !kf) ? 'disabled' : ''}>▶ Включить синхронизацию</button>`}
       </div>
       <p class="hint">
-        ${!sid ? 'Сначала создай Sync ID (на втором устройстве — загрузи тот же файл). ' : ''}
+        ${!sid ? 'Создай Sync ID на одном устройстве, «Скопировать» → на втором «Вставить» тот же. ' : ''}
         ${!kf ? '<b>Нужен keyfile</b> (выше) — без него синк не расшифровать. ' : ''}
         Включение спросит пароль и запомнит синк на этом устройстве (сам пароль не хранится). На
         сервер уезжает только шифротекст — Supabase данные прочитать не может. Изменения
@@ -1245,11 +1245,25 @@ async function renderSettings() {
     if ($('#sid-create')) $('#sid-create').onclick = async () => {
       const id = generateSyncId();
       await setSyncId(db, id);
-      downloadBytes(id, 'nagruzka.syncid', 'text/plain');
-      alert('Sync ID создан и скачан.\n\nПерекинь nagruzka.syncid на второе устройство (AirDrop) и там «Загрузить Sync ID» — это свяжет их в одну ячейку.');
+      alert('Sync ID создан.\n\nНа этом устройстве нажми «Скопировать», на втором — «Вставить». Через Universal Clipboard скопированное на Маке вставляется прямо на айфоне.');
       render();
     };
-    if ($('#sid-download')) $('#sid-download').onclick = () => downloadBytes(sid, 'nagruzka.syncid', 'text/plain');
+    if ($('#sid-copy')) $('#sid-copy').onclick = async () => {
+      try { await navigator.clipboard.writeText(sid); alert('Sync ID скопирован ✓'); }
+      catch { const i = $('#sid-show'); i.focus(); i.select(); document.execCommand('copy'); alert('Sync ID выделен — Cmd/долгий тап → Копировать'); }
+    };
+    if ($('#sid-paste')) $('#sid-paste').onclick = async () => {
+      const txt = (prompt('Вставь Sync ID со второго устройства:') || '').trim();
+      if (!txt) return;
+      if (!isValidSyncId(txt)) { alert('Это не похоже на Sync ID «Нагрузки».'); return; }
+      // смена Sync ID = другая ячейка: сбрасываем сохранённый ключ синка
+      if (syncEngine) { syncEngine.stop(); syncEngine.key = null; }
+      syncStatus = 'off';
+      await clearSyncKey(db);
+      await setSyncId(db, txt);
+      alert('Sync ID сохранён ✓ Теперь включи синхронизацию.');
+      render();
+    };
     if ($('#sid-clear')) $('#sid-clear').onclick = async () => {
       if (!confirm('Удалить Sync ID с этого устройства? Синхронизация здесь отключится.')) return;
       if (syncEngine) { syncEngine.stop(); syncEngine.key = null; }
@@ -1258,16 +1272,6 @@ async function renderSettings() {
       await clearSyncKey(db);
       render();
     };
-    $('#sid-load').onclick = () => $('#sid-file').click();
-    $('#sid-file').addEventListener('change', async e => {
-      const file = e.target.files[0];
-      if (!file) return;
-      const txt = (await file.text()).trim();
-      if (!isValidSyncId(txt)) { alert('Это не похоже на Sync ID «Нагрузки».'); return; }
-      await setSyncId(db, txt);
-      alert('Sync ID загружен ✓');
-      render();
-    });
 
     if ($('#sync-on')) $('#sync-on').onclick = async () => {
       const pass = prompt('Пароль синхронизации (запомнится на этом устройстве; сам пароль не хранится):');
