@@ -222,7 +222,12 @@ body {
 
 /* ── модалка и формы ── */
 dialog {
-  position: relative;
+  /* фиксируем по центру экрана — иначе после скролла модалка уезжает за границу */
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  margin: 0;
   background: var(--surface);
   color: var(--text);
   border: 1px solid var(--border);
@@ -230,7 +235,6 @@ dialog {
   padding: 0;
   width: min(460px, calc(100vw - 28px));
   max-height: min(90vh, 90dvh);
-  margin: auto;
   overflow: hidden;
 }
 /* раскладку включаем только у ОТКРЫТОЙ модалки — иначе закрытый <dialog>
