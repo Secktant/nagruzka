@@ -318,6 +318,28 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 .btn:disabled:hover { border-color: var(--border); filter: none; }
 
+/* Глобальная плашка связи с сервером синка */
+.toast {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  left: 50%;
+  transform: translateX(-50%) translateY(-150%);
+  z-index: 60;
+  max-width: calc(100vw - 24px);
+  padding: 9px 16px;
+  border-radius: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform .25s ease, opacity .25s ease;
+}
+.toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+.toast.ok   { background: #15331f; color: #7ee2a4; border: 1px solid rgba(63, 185, 106, .55); }
+.toast.bad  { background: #38211d; color: #ff9d8a; border: 1px solid rgba(226, 109, 90, .6); }
+.toast.warn { background: #352f1a; color: #ffd479; border: 1px solid rgba(224, 179, 65, .5); }
+
 .keyfile-status {
   font-size: 13px; padding: 8px 12px; border-radius: 10px;
   border: 1px solid var(--border); background: var(--surface-2);

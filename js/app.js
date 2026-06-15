@@ -1083,7 +1083,8 @@ async function renderSettings() {
 
       <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
         ${(syncStatus === 'synced' || syncStatus === 'syncing')
-          ? `<button class="btn" id="sync-off">Выключить синхронизацию</button>`
+          ? `<button class="btn" id="sync-off">Выключить синхронизацию</button>
+             <button class="btn" id="sync-pass">Сменить пароль</button>`
           : `<button class="btn primary" id="sync-on" ${(!sid || !kf) ? 'disabled' : ''}>▶ Включить синхронизацию</button>`}
       </div>
       <p class="hint">
@@ -1295,6 +1296,21 @@ async function renderSettings() {
       await clearSyncKey(db);   // забыть ключ — при следующем включении спросит пароль
       render();
     };
+    if ($('#sync-pass')) $('#sync-pass').onclick = async () => {
+      const p1 = prompt('Новый пароль синхронизации (надёжный — запиши в менеджер паролей):');
+      if (!p1) return;
+      if (p1.length < 6) { alert('Слишком короткий — минимум 6 символов.'); return; }
+      const p2 = prompt('Повтори новый пароль:');
+      if (p1 !== p2) { alert('Пароли не совпали.'); return; }
+      try {
+        await syncEngine.changePassword(p1);                               // перешифровать + выложить
+        await setSyncKey(db, { key: syncEngine.key, salt: syncEngine.salt }); // запомнить новый ключ
+        alert('Пароль синхронизации изменён ✓\n\nНа ДРУГИХ устройствах синк покажет «не удалось расшифровать» — там нажми «Выключить» и снова «Включить» уже с новым паролем.');
+        render();
+      } catch (err) {
+        alert(err.message);
+      }
+    };
   }
 }
 
@@ -1403,8 +1419,32 @@ function createSyncEngine() {
       render();
     },
     getKeyfile: () => currentKeyfile || null,
-    onStatus: (s) => { syncStatus = s; updateSyncStatusUI(); },
+    onStatus: (s) => { syncStatus = s; updateSyncStatusUI(); updateConnBanner(s); },
   });
+}
+
+// Глобальная плашка связи: зелёная (на связи, авто-исчезает), красная (висит до восстановления).
+let toastTimer = null;
+let prevConn = null; // synced | offline | error — для показа «зелёной» только при первом/после сбоя
+function showToast(kind, text, autohideMs) {
+  const el = $('#toast');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'toast show ' + kind;
+  clearTimeout(toastTimer);
+  if (autohideMs) toastTimer = setTimeout(() => el.classList.remove('show'), autohideMs);
+}
+function hideToast() { const el = $('#toast'); if (el) { clearTimeout(toastTimer); el.classList.remove('show'); } }
+function updateConnBanner(s) {
+  if (s === 'syncing') return;                       // транзиентное — не трогаем плашку
+  if (s === 'off' || s === 'locked') { hideToast(); prevConn = null; return; }
+  if (s === 'conflict') { showToast('warn', 'Был конфликт — взято свежее', 3000); return; }
+  if (s === 'synced') {
+    if (prevConn !== 'synced') showToast('ok', '✓ Сервер на связи', 2500); // первый раз / после сбоя
+    prevConn = 'synced'; return;
+  }
+  if (s === 'offline') { showToast('bad', '⚠ Сервер недоступен — синк на паузе', 0); prevConn = 'offline'; return; }
+  if (s === 'error')   { showToast('bad', '⚠ Не удалось расшифровать — проверь пароль/keyfile', 0); prevConn = 'error'; return; }
 }
 
 async function main() {

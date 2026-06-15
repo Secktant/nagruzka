@@ -122,17 +122,37 @@ export class SyncEngine {
   // Проверить сервер и применить, если версия выше нашей.
   async pullAndApply() {
     if (!this.key) return;
+    let remote;
     try {
-      const remote = await pull(this.id);
+      remote = await pull(this.id);            // сеть
+    } catch (e) {
+      this.status('offline'); return;          // сервер реально недоступен
+    }
+    try {
       if (remote && remote.version > this.version) {
-        const json = await openGCM(this.key, b64.dec(remote.blob));
+        const json = await openGCM(this.key, b64.dec(remote.blob)); // расшифровка
         this.version = remote.version;
         await this.opts.applyStateJSON(json);
-        this.status('synced');
       }
+      this.status('synced');                   // связь есть (применили или нечего)
     } catch (e) {
-      this.status('offline');
+      this.status('error');                    // не сервер, а пароль/keyfile
     }
+  }
+
+  // Сменить пароль синка: перешифровать снимок новым ключом (новая соль) и выложить.
+  async changePassword(newPass) {
+    if (!this.key) throw new Error('Синхронизация не активна');
+    const kf = this.opts.getKeyfile() || null;
+    const newSalt = randomSalt();
+    const newKey = await deriveKey(newPass, kf, newSalt);
+    const blob = await sealGCM(newKey, this.opts.getStateJSON());
+    const r = await push(this.id, b64.enc(newSalt), b64.enc(blob), this.version);
+    if (!r.ok) throw new Error('На сервере есть несинхронизированные изменения — подожди пару секунд и повтори');
+    this.salt = newSalt;
+    this.key = newKey;
+    this.version = r.version;
+    this.status('synced');
   }
 
   // Дебаунс выгрузки после локальной правки.
