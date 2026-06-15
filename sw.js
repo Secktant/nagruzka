@@ -1,7 +1,7 @@
 // Service worker «Нагрузки». Стратегия: network-first с откатом в кэш —
 // онлайн всегда свежие файлы, офлайн работает из кэша.
 // Версию кэша поднимать при изменении набора файлов.
-const CACHE = 'nagruzka-v13';
+const CACHE = 'nagruzka-v14';
 const ASSETS = [
   './',
   'index.html',
@@ -15,6 +15,8 @@ const ASSETS = [
   'js/sync.js',
   'js/sync-config.js',
   'js/vendor/argon2.umd.min.js',
+  'icons/favicon.svg',
+  'icons/favicon-32.png',
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/apple-touch-icon-180.png',
