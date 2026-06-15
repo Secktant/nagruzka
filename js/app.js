@@ -731,10 +731,15 @@ function openDebtForm(instId) {
     $('#sched-auto').onclick = regenSchedule;
     $('#sched-add').onclick = () => {
       const per = parseMoney(form.perPeriod.value) || 0;
+      const total = parseMoney(form.total.value) || 0;
+      const planSum = schedule.reduce((s, x) => s + (x.amount || 0), 0);
+      const remaining = total > 0 ? Math.round(total - planSum) : per;
+      if (total > 0 && remaining <= 0) return;                 // всё уже распределено
       const last = schedule.length ? schedule[schedule.length - 1].period : form.firstPeriod.value;
       const next = firstFreePeriod(last);
       if (!next) { alert('Свободных дат в горизонте больше нет.'); return; }
-      schedule.push({ period: next, amount: per });
+      const amount = total > 0 ? Math.min(per || remaining, remaining) : per; // последний = остаток
+      schedule.push({ period: next, amount: amount > 0 ? amount : per });
       renderSchedule();
     };
     const list = $('#sched-list');
@@ -763,6 +768,12 @@ function openDebtForm(instId) {
 
   // Предпросмотр + нагрузка на каждую дату.
   function updatePreview() {
+    if (isNew) {  // «+ платёж» недоступна, когда расписание уже покрывает общую сумму
+      const t = parseMoney(form.total.value) || 0;
+      const sum = schedule.reduce((s, x) => s + (x.amount || 0), 0);
+      const addBtn = $('#sched-add');
+      if (addBtn) { addBtn.disabled = t > 0 && sum >= t - 0.5; addBtn.title = addBtn.disabled ? 'Всё распределено' : ''; }
+    }
     const box = $('#debt-preview');
     const plan = (isNew ? schedule : payRows.map(p => ({ period: p.period, amount: p.amount })))
       .filter(it => it.amount > 0);
