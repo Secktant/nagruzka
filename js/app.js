@@ -625,13 +625,28 @@ function openDebtForm(instId) {
     form.remaining.addEventListener('input', () => {
       form.total.value = fmtNumEditor(sums.paidSum + parseMoney(form.remaining.value));
     });
+    // × — переключатель: пропустить (обнулить) ↔ вернуть прежнюю сумму
     form.querySelectorAll('[data-del-dpi]').forEach(btn => {
+      btn.title = 'Пропустить / вернуть платёж';
       btn.onclick = () => {
+        const row = btn.closest('.debt-pay-row');
         const field = form.querySelector(`[data-dpi="${btn.dataset.delDpi}"]`);
-        field.value = '0';
+        if ((parseMoney(field.value) || 0) === 0) {                 // вернуть
+          const orig = payRows[Number(btn.dataset.delDpi)].amount;
+          field.value = fmtNumEditor(row.dataset.prevAmount || orig);
+        } else {                                                    // пропустить
+          row.dataset.prevAmount = parseMoney(field.value);
+          field.value = '0';
+        }
         field.dispatchEvent(new Event('input', { bubbles: true }));
-        btn.closest('.debt-pay-row').classList.add('skipped');
       };
+    });
+    // «пропущенный» вид = сумма равна 0 (срабатывает и при ручном вводе)
+    form.querySelectorAll('[data-dpi]').forEach(field => {
+      const sync = () => field.closest('.debt-pay-row')
+        .classList.toggle('skipped', (parseMoney(field.value) || 0) === 0);
+      field.addEventListener('input', sync);
+      sync();
     });
     // + платёж к существующей рассрочке: запись на ближайшую свободную дату.
     // Сумма = min(платёж в период, остаток): последний платёж получается ровно остатком.
