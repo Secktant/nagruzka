@@ -294,6 +294,11 @@ function openPaymentForm(period, key) {
   const names = [...new Set(state.records
     .filter(r => r.kind === 'expense' && !r.skipped).map(r => r.name).reverse())];
 
+  // перенос на другую дату — только для обычного разового платежа
+  const canMove = !isNew && !isVirtual && !p.installmentId && !p.regularId;
+  const movePeriods = canMove ? generatePeriods(state.settings.startPeriod, horizonEnd()) : [];
+  if (canMove && !movePeriods.includes(period)) { movePeriods.push(period); movePeriods.sort(); }
+
   openModal(`
   <form id="pay-form" class="form">
     <h3>${isNew ? 'Новый платёж' : 'Платёж'} · ${fmtPeriodFull(period)}</h3>
@@ -309,6 +314,9 @@ function openPaymentForm(period, key) {
     </label>
     <div class="lbl-like">Банк</div>
     ${bankChipsHTML(p?.bank || null)}
+    ${canMove ? `<label style="margin-top:12px">Дата
+      <select name="period">${movePeriods.map(pp => `<option value="${pp}" ${pp === period ? 'selected' : ''}>${fmtPeriodFull(pp)}</option>`).join('')}</select>
+    </label>` : ''}
     <div class="form-actions">
       ${!isNew ? `<button type="button" class="btn danger" id="pay-delete">${isVirtual && p.regularId ? 'Убрать из периода' : 'Удалить'}</button>` : ''}
       <span class="spacer"></span>
@@ -367,6 +375,11 @@ function openPaymentForm(period, key) {
     } else {
       const rec = state.records.find(r => r.id === p.id);
       Object.assign(rec, { name, amount, bank });
+      const newPeriod = f.get('period');
+      if (canMove && newPeriod && newPeriod !== rec.period) {
+        rec.period = newPeriod;                       // перенос на другую дату
+        state.records.sort((a, b) => a.period < b.period ? -1 : 1);
+      }
       await putRecord(db, rec);
     }
     closeModal(); render();
