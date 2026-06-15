@@ -316,6 +316,9 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .btn.danger:hover { border-color: var(--red); }
 .btn.small { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
+/* закрытая рассрочка: блокируем степперы сумм и чипы банков (инпуты уже disabled) */
+.form.locked .num-steps,
+.form.locked .chips { pointer-events: none; opacity: .6; }
 .btn:disabled:hover { border-color: var(--border); filter: none; }
 
 /* Глобальная плашка связи с сервером синка */

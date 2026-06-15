@@ -518,6 +518,8 @@ function openDebtForm(instId) {
   const inst = instId ? state.installments.find(i => i.id === instId) : null;
   const sums = inst ? installmentSummaries(state, timeline).find(s => s.inst.id === instId) : null;
   const isNew = !inst;
+  const locked = !isNew && sums.closed;   // закрыта (всё оплачено) → только просмотр
+  const dis = locked ? 'disabled' : '';
   const today = todayISO();
 
   const allPeriods = generatePeriods(today.slice(0, 7) + '-01', horizonEnd());
@@ -550,30 +552,31 @@ function openDebtForm(instId) {
   let schedule = isNew ? [] : null;
 
   openModal(`
-  <form id="debt-form" class="form">
-    <h3>${isNew ? 'Новая рассрочка' : esc(inst.name)}</h3>
+  <form id="debt-form" class="form ${locked ? 'locked' : ''}">
+    <h3>${isNew ? 'Новая рассрочка' : esc(inst.name)}${locked ? ' · закрыта ✓' : ''}</h3>
     <label>Название
-      <input name="name" required value="${esc(inst?.name || '')}" placeholder="Ноутбук">
+      <input name="name" required value="${esc(inst?.name || '')}" placeholder="Ноутбук" ${dis}>
     </label>
     <div class="row2">
       <label>Общая сумма, ₽
-        ${moneyInput('total', inst?.total ?? '', 'placeholder="50 000"')}
+        ${moneyInput('total', inst?.total ?? '', `placeholder="50 000" ${dis}`)}
       </label>
       <label>Платёж в период, ₽
-        ${moneyInput('perPeriod', inst?.perPeriod ?? '', 'placeholder="5 000"')}
+        ${moneyInput('perPeriod', inst?.perPeriod ?? '', `placeholder="5 000" ${dis}`)}
       </label>
     </div>
+    ${!isNew && !locked ? `<button type="button" class="btn small" id="debt-recalc">↻ Пересчитать платежи под «платёж в период»</button>` : ''}
     ${!isNew ? `
     <div class="row2">
       <label>Внесено, ₽
         <input value="${fmtNumEditor(sums.paidSum)}" disabled>
       </label>
       <label>Осталось оплатить, ₽
-        ${moneyInput('remaining', sums.remaining, '')}
+        ${moneyInput('remaining', sums.remaining, dis)}
       </label>
     </div>
-    <p class="hint">Поля связаны: ошиблись с ценой — правьте общую сумму; погасили досрочно —
-    правьте «осталось». Внесённое не меняется.</p>
+    ${locked ? '' : `<p class="hint">Поля связаны: ошиблись с ценой — правьте общую сумму; погасили досрочно —
+    правьте «осталось». Внесённое не меняется.</p>`}
     <div class="lbl-like">Платежи по рассрочке</div>
     <div class="debt-pays">
       ${payRows.map((p, i) => `
@@ -581,13 +584,13 @@ function openDebtForm(instId) {
         <span class="dp-status ${p.paid ? 'ok' : ''}">${p.paid ? '✓' : (p.virtual ? 'план' : '—')}</span>
         <span class="dp-period">${fmtPeriodFull(p.period)}</span>
         ${loadBadge(p.load)}
-        ${moneyInput('', p.amount, `data-dpi="${i}" aria-label="Сумма платежа"`)}
-        ${!p.paid ? `<button type="button" class="icon-btn danger" data-del-dpi="${i}" title="Пропустить платёж">×</button>` : '<span></span>'}
+        ${moneyInput('', p.amount, `data-dpi="${i}" aria-label="Сумма платежа" ${dis}`)}
+        ${!p.paid && !locked ? `<button type="button" class="icon-btn danger" data-del-dpi="${i}" title="Пропустить платёж">×</button>` : '<span></span>'}
       </div>`).join('') || '<div class="empty small">Платежей пока нет</div>'}
     </div>
-    <button type="button" class="btn small" id="debt-add-pay">+ платёж</button>
-    <p class="hint">Суммы можно поправить (банк списал не ровно). «×» — пропустить будущий платёж
-    (период сдвинется). «Внесено»/«осталось» пересчитаются после сохранения.</p>` : ''}
+    ${locked ? '' : `<button type="button" class="btn small" id="debt-add-pay" ${sums.shortfall <= 0 ? 'disabled' : ''}>+ платёж</button>
+    <p class="hint">${sums.shortfall <= 0 ? 'Все платежи распределены — добавлять больше нечего. ' : ''}Суммы можно поправить (банк списал не ровно). «×» — пропустить будущий платёж
+    (период сдвинется). «Внесено»/«осталось» пересчитаются после сохранения.</p>`}` : ''}
     ${isNew ? `
     <label>Первый платёж
       <select name="firstPeriod">${periodOptions(allPeriods[0])}</select>
@@ -604,8 +607,8 @@ function openDebtForm(instId) {
     <div class="form-actions">
       ${!isNew ? `<button type="button" class="btn danger" id="debt-delete">Удалить</button>` : ''}
       <span class="spacer"></span>
-      <button type="button" class="btn" id="modal-cancel">Отмена</button>
-      <button class="btn primary">Сохранить</button>
+      <button type="button" class="btn" id="modal-cancel">${locked ? 'Закрыть' : 'Отмена'}</button>
+      ${locked ? '' : '<button class="btn primary">Сохранить</button>'}
     </div>
   </form>`);
 
@@ -630,8 +633,10 @@ function openDebtForm(instId) {
         btn.closest('.debt-pay-row').classList.add('skipped');
       };
     });
-    // + платёж к существующей рассрочке: запись на ближайшую свободную дату
-    $('#debt-add-pay').onclick = async () => {
+    // + платёж к существующей рассрочке: запись на ближайшую свободную дату.
+    // Сумма = min(платёж в период, остаток): последний платёж получается ровно остатком.
+    const addPay = $('#debt-add-pay');
+    if (addPay) addPay.onclick = async () => {
       const used = new Set(payRows.map(p => p.period));
       const next = allPeriods.find(p => !used.has(p));
       if (!next) { alert('Свободных дат в горизонте больше нет.'); return; }
@@ -645,6 +650,33 @@ function openDebtForm(instId) {
       state.records.sort((a, b) => a.period < b.period ? -1 : 1);
       await putRecord(db, rec);
       closeModal(); render(); openDebtForm(inst.id);  // переоткрыть с обновлёнными данными
+    };
+
+    // ↻ пересчитать хвост под новый «платёж в период» (неоплаченные платежи заменяются)
+    const recalcBtn = $('#debt-recalc');
+    if (recalcBtn) recalcBtn.onclick = async () => {
+      const newPer = parseMoney(form.perPeriod.value);
+      if (!(newPer > 0)) { alert('Укажите «платёж в период» больше нуля.'); return; }
+      const total = parseMoney(form.total.value) || inst.total;
+      const paidPeriods = new Set();
+      let paidSum = 0; const unpaidIds = [];
+      for (const r of state.records) {
+        if (r.installmentId !== inst.id) continue;
+        if (r.paid) { paidPeriods.add(r.period); paidSum += r.amount; } else unpaidIds.push(r.id);
+      }
+      const remaining = Math.max(0, Math.round(total - paidSum));
+      if (remaining <= 0) { alert('По рассрочке уже всё оплачено — пересчитывать нечего.'); return; }
+      const lastPaid = [...paidPeriods].sort().pop() || (today.slice(0, 7) + '-01');
+      const startFrom = allPeriods.find(p => p > lastPaid && !paidPeriods.has(p)) || allPeriods.find(p => !paidPeriods.has(p));
+      const tail = startFrom ? autoSchedule(remaining, newPer, startFrom).filter(it => !paidPeriods.has(it.period)) : [];
+      if (!tail.length) { alert('Нет свободных дат в горизонте для пересчёта.'); return; }
+      const lastAmt = tail[tail.length - 1].amount;
+      if (!confirm(`Пересчитать под платёж ${fmtMoney(newPer)}?\n\nОстаток ${fmtMoney(remaining)} → ${tail.length} ${plural(tail.length, 'платёж', 'платежа', 'платежей')} (последний ${fmtMoney(lastAmt)}). Текущие неоплаченные платежи будут заменены.`)) return;
+      state.records = state.records.filter(r => !unpaidIds.includes(r.id));
+      for (const id of unpaidIds) await deleteRecord(db, id);
+      Object.assign(inst, { plan: tail, perPeriod: newPer, total });
+      await putInstallment(db, inst);
+      closeModal(); render(); openDebtForm(inst.id);
     };
   }
 
@@ -773,6 +805,7 @@ function openDebtForm(instId) {
 
   form.onsubmit = async e => {
     e.preventDefault();
+    if (locked) return;                 // закрытая рассрочка — не сохраняем
     const name = form.name.value.trim();
     const per = parseMoney(form.perPeriod.value);
     if (!name) return;
