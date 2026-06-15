@@ -109,6 +109,7 @@ export class SyncEngine {
       if (r.ok) {
         this.version = r.version;
         this.status('synced');
+        this.opts.onSaved?.();   // правка сохранена и улетела на сервер — для зелёной плашки
       } else {
         // на сервере оказалось свежее: тянем и применяем, затем статус «конфликт»
         await this.pullAndApply();

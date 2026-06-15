@@ -305,7 +305,7 @@ function openPaymentForm(period, key) {
       <datalist id="name-suggest">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
     </label>
     <label>Сумма, ₽
-      ${moneyInput('amount', p ? p.amount : '', 'placeholder="5 000"')}
+      ${moneyInput('amount', p ? p.amount : '', 'placeholder="5 000" required')}
     </label>
     <div class="lbl-like">Банк</div>
     ${bankChipsHTML(p?.bank || null)}
@@ -349,7 +349,14 @@ function openPaymentForm(period, key) {
     const name = f.get('name').trim();
     const amount = parseMoney(f.get('amount'));
     const bank = selectedBank();
-    if (!name || !Number.isFinite(amount)) return;
+    if (!name) return; // поле name с required — пустым сюда не дойдёт
+    if (!Number.isFinite(amount) || amount <= 0) {
+      const inp = e.target.querySelector('[name=amount]');
+      inp?.setCustomValidity('Введите сумму больше нуля');
+      inp?.reportValidity();
+      inp?.addEventListener('input', () => inp.setCustomValidity(''), { once: true });
+      return;
+    }
     if (isNew) {
       const rec = { id: uid('p'), period, kind: 'expense', name, amount, bank, paid: false };
       state.records.push(rec);
@@ -1420,6 +1427,7 @@ function createSyncEngine() {
     },
     getKeyfile: () => currentKeyfile || null,
     onStatus: (s) => { syncStatus = s; updateSyncStatusUI(); updateConnBanner(s); },
+    onSaved: () => showToast('ok', '✓ Сохранено и синхронизировано', 2000), // на каждую правку
   });
 }
 
