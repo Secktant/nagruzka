@@ -582,7 +582,7 @@ function openDebtForm(instId) {
         ${moneyInput('perPeriod', inst?.perPeriod ?? '', `placeholder="5 000" ${dis}`)}
       </label>
     </div>
-    ${!isNew && !locked ? `<button type="button" class="btn small" id="debt-recalc">↻ Пересчитать платежи под «платёж в период»</button>` : ''}
+    ${!isNew && !locked ? `<button type="button" class="btn small" id="debt-recalc">↻ Обновить</button>` : ''}
     ${!isNew ? `
     <div class="row2">
       <label>Внесено, ₽
@@ -720,7 +720,7 @@ function openDebtForm(instId) {
       const tail = startFrom ? autoSchedule(remaining, newPer, startFrom).filter(it => !paidPeriods.has(it.period)) : [];
       if (!tail.length) { alert('Нет свободных дат в горизонте для пересчёта.'); return; }
       const lastAmt = tail[tail.length - 1].amount;
-      if (!confirm(`Пересчитать под платёж ${fmtMoney(newPer)}?\n\nОстаток ${fmtMoney(remaining)} → ${tail.length} ${plural(tail.length, 'платёж', 'платежа', 'платежей')} (последний ${fmtMoney(lastAmt)}). Текущие неоплаченные платежи будут заменены.`)) return;
+      if (!confirm(`Обновить под платёж ${fmtMoney(newPer)}?\n\nОстаток ${fmtMoney(remaining)} → ${tail.length} ${plural(tail.length, 'платёж', 'платежа', 'платежей')} (последний ${fmtMoney(lastAmt)}). Текущие неоплаченные платежи будут заменены.`)) return;
       draftRows = [...paidRows, ...tail.map(it => ({ paid: false, period: it.period, amount: it.amount, origAmount: it.amount, prevAmount: null, name: inst.name, bank: inst.bank }))].sort(byPeriod);
       renderPayRows();
     };
@@ -861,15 +861,19 @@ function openDebtForm(instId) {
     const enteredTotal = isNew ? (parseMoney(form.total.value) || planSum)
       : (parseMoney(form.total.value) || inst.total || planSum);
     const shortfall = Math.round(enteredTotal - planSum);
+    // диффы нагрузки — только по периодам, где есть платёж (иначе список дат
+    // не сходится с числом платежей: освобождённые периоды выглядят как лишние строки)
+    const planPeriods = new Set(plan.map(it => it.period));
     const diffs = [];
     for (const day of draftTl.values()) {
+      if (!planPeriods.has(day.period)) continue;
       const before = timeline.get(day.period);
       if (before && day.load != null && Math.round(day.load * 100) !== Math.round((before.load ?? 0) * 100)) {
         diffs.push({ p: day.period, from: before.load ?? 0, to: day.load, zone: loadZone(day.load) });
       }
     }
     box.hidden = false;
-    const recalcHint = isNew ? '«↻ авто»' : '«↻ Пересчитать»';
+    const recalcHint = isNew ? '«↻ авто»' : '«↻ Обновить»';
     const head = shortfall > 0
       ? `<div class="warn">⚠ Платежи покрывают ${fmtMoney(planSum)} из ${fmtMoney(enteredTotal)} — не хватает на <b>${fmtMoney(shortfall)}</b>. Нажмите ${recalcHint} или «+ платёж».</div>`
       : `<div><b>${n}</b> ${plural(n, 'платёж', 'платежа', 'платежей')} · последний ${fmtMoney(last)} · закроется <b>${fmtPeriodFull(closeP)}</b></div>`;
