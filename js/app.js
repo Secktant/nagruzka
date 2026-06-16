@@ -927,9 +927,13 @@ function openDebtForm(instId) {
     const rec = (end && N > 0) ? Math.ceil((enteredTotal - paidSum) / N) : 0;
     const overEnd = end ? plan.some(it => it.period > end) : false;   // платёж позже даты
     const misfit = end && rec > 0 && (shortfall > 0 || overEnd);       // не укладываемся в срок
+    const overpay = Math.round(-shortfall);                            // платежи > общей суммы
 
     let head;
-    if (misfit) {
+    if (overpay > 0) {
+      head = `<div class="warn">⚠ Платежи на <b>${fmtMoney(overpay)}</b> больше общей суммы —
+        ${fmtMoney(planSum)} из ${fmtMoney(enteredTotal)}. Уменьшите суммы или нажмите ${recalcHint}.</div>`;
+    } else if (misfit) {
       const why = shortfall > 0
         ? `До <b>${fmtPeriodFull(end)}</b> не хватает <b>${fmtMoney(shortfall)}</b>.`
         : `Платежи выходят за <b>${fmtPeriodFull(end)}</b>.`;
@@ -977,6 +981,8 @@ function openDebtForm(instId) {
       const total = parseMoney(form.total.value) || planSum;  // общая сумма = введённая
       if (planSum < total - 0.5) {
         if (!confirm(`Расписание покрывает только ${fmtMoney(planSum)} из ${fmtMoney(total)} — не хватает платежей на ${fmtMoney(total - planSum)}.\n\nСохранить как есть? Платежи можно добавить позже.`)) return;
+      } else if (planSum > total + 0.5) {
+        if (!confirm(`Платежи (${fmtMoney(planSum)}) больше общей суммы (${fmtMoney(total)}) на ${fmtMoney(planSum - total)} — это переплата.\n\nСохранить как есть?`)) return;
       }
       const rec = {
         id: uid('inst'), name, total, perPeriod: per || plan[0].amount,
@@ -998,6 +1004,8 @@ function openDebtForm(instId) {
       const paidSum = draftRows.filter(r => r.paid).reduce((s, r) => s + r.amount, 0);
       if (paidSum + planSum < total - 0.5) {
         if (!confirm(`Платежи покрывают ${fmtMoney(paidSum + planSum)} из ${fmtMoney(total)} — не хватает на ${fmtMoney(total - paidSum - planSum)}.\n\nСохранить как есть? Платежи можно добавить позже.`)) return;
+      } else if (paidSum + planSum > total + 0.5) {
+        if (!confirm(`Платежи (${fmtMoney(paidSum + planSum)}) больше общей суммы (${fmtMoney(total)}) на ${fmtMoney(paidSum + planSum - total)} — это переплата.\n\nСохранить как есть?`)) return;
       }
       // выбрасываем прежние неоплаченные записи рассрочки — их роль теперь играет plan
       const dropIds = state.records.filter(r => r.installmentId === inst.id && !r.paid).map(r => r.id);
