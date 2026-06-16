@@ -390,6 +390,7 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .preview-box .diff.muted { font-size: 12px; }
 .preview-box .warn { color: #ffb38a; line-height: 1.4; }
 .preview-box .warn b { color: var(--red); }
+.preview-box .warn .btn { margin-top: 8px; }
 
 .card.debt.under { border-color: rgba(226, 109, 90, .45); }
 .debt-warn {
