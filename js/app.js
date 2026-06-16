@@ -524,8 +524,12 @@ function openDebtForm(instId) {
 
   const allPeriods = generatePeriods(today.slice(0, 7) + '-01', horizonEnd());
   // used — даты, занятые другими строками: их в выпадашке делаем недоступными (без дублей)
-  const periodOptions = (sel, used) => allPeriods
-    .map(p => `<option value="${p}" ${p === sel ? 'selected' : ''} ${used && used.has(p) && p !== sel ? 'disabled' : ''}>${fmtPeriodFull(p)}</option>`).join('');
+  const periodOptions = (sel, used) => {
+    // текущая дата строки всегда в списке (вдруг платёж просрочен и его период < сегодня)
+    const list = (sel && !allPeriods.includes(sel)) ? [sel, ...allPeriods].sort() : allPeriods;
+    return list
+      .map(p => `<option value="${p}" ${p === sel ? 'selected' : ''} ${used && used.has(p) && p !== sel ? 'disabled' : ''}>${fmtPeriodFull(p)}</option>`).join('');
+  };
 
   // Существующая рассрочка: все её платежи (записи + хвост) с нагрузкой периода.
   const payRows = [];
@@ -550,6 +554,19 @@ function openDebtForm(instId) {
     return out;
   };
   let schedule = isNew ? [] : null;
+
+  // Существующая рассрочка работает через ЧЕРНОВИК: правки сумм/дат/«+ платёж»/«↻»/
+  // пропусков копятся в памяти и применяются только по «Сохранить». «Отмена» — откат.
+  // paid-строки неизменны (только показ); неоплаченные — редактируемы.
+  let draftRows = isNew ? null : payRows.map(p => ({
+    paid: !!p.paid,
+    period: p.period,
+    amount: p.amount,
+    origAmount: p.amount,
+    prevAmount: null,        // запомненная сумма для тоггла «пропустить ↔ вернуть»
+    name: p.name, bank: p.bank,
+  }));
+  const byPeriod = (a, b) => a.period < b.period ? -1 : 1;
 
   openModal(`
   <form id="debt-form" class="form ${locked ? 'locked' : ''}">
@@ -578,19 +595,10 @@ function openDebtForm(instId) {
     ${locked ? '' : `<p class="hint">Поля связаны: ошиблись с ценой — правьте общую сумму; погасили досрочно —
     правьте «осталось». Внесённое не меняется.</p>`}
     <div class="lbl-like">Платежи по рассрочке</div>
-    <div class="debt-pays">
-      ${payRows.map((p, i) => `
-      <div class="debt-pay-row">
-        <span class="dp-status ${p.paid ? 'ok' : ''}">${p.paid ? '✓' : (p.virtual ? 'план' : '—')}</span>
-        <span class="dp-period">${fmtPeriodFull(p.period)}</span>
-        ${loadBadge(p.load)}
-        ${moneyInput('', p.amount, `data-dpi="${i}" aria-label="Сумма платежа" ${dis}`)}
-        ${!p.paid && !locked ? `<button type="button" class="icon-btn danger" data-del-dpi="${i}" title="Пропустить платёж">×</button>` : '<span></span>'}
-      </div>`).join('') || '<div class="empty small">Платежей пока нет</div>'}
-    </div>
-    ${locked ? '' : `<button type="button" class="btn small" id="debt-add-pay" ${sums.shortfall <= 0 ? 'disabled' : ''}>+ платёж</button>
-    <p class="hint">${sums.shortfall <= 0 ? 'Все платежи распределены — добавлять больше нечего. ' : ''}Суммы можно поправить (банк списал не ровно). «×» — пропустить будущий платёж
-    (период сдвинется). «Внесено»/«осталось» пересчитаются после сохранения.</p>`}` : ''}
+    <div class="debt-pays" id="debt-pays"></div>
+    ${locked ? '' : `<button type="button" class="btn small" id="debt-add-pay">+ платёж</button>
+    <p class="hint">Суммы и даты можно поправить — дату меняйте в выпадашке периода. «×» — пропустить
+    платёж. Изменения применяются по «Сохранить» (до этого «Отмена» всё откатит).</p>`}` : ''}
     ${isNew ? `
     <label>Первый платёж
       <select name="firstPeriod">${periodOptions(allPeriods[0])}</select>
@@ -616,7 +624,24 @@ function openDebtForm(instId) {
   $('#modal-cancel').onclick = closeModal;
   const form = $('#debt-form');
 
-  // ── существующая: связь total↔remaining и пропуск будущих платежей ──
+  // ── существующая: всё через черновик draftRows; в БД ничего до «Сохранить» ──
+  function renderPayRows() {
+    const box = $('#debt-pays');
+    if (!box) return;
+    const used = new Set(draftRows.map(r => r.period));
+    box.innerHTML = draftRows.map((r, i) => `
+      <div class="debt-pay-row ${r.amount === 0 ? 'skipped' : ''}" data-dpi="${i}">
+        <span class="dp-status ${r.paid ? 'ok' : ''}">${r.paid ? '✓' : 'план'}</span>
+        ${r.paid
+          ? `<span class="dp-period">${fmtPeriodFull(r.period)}</span>`
+          : `<select data-row-period title="Перенести на другую дату">${periodOptions(r.period, used)}</select>`}
+        <span class="dp-load" data-row-load></span>
+        ${moneyInput('', r.amount, `data-row-amount aria-label="Сумма платежа" ${r.paid ? 'disabled' : ''}`)}
+        ${r.paid ? '<span></span>' : `<button type="button" class="icon-btn danger" data-row-skip title="Пропустить / вернуть платёж">×</button>`}
+      </div>`).join('') || '<div class="empty small">Платежей пока нет</div>';
+    updatePreview();
+  }
+
   if (!isNew) {
     form.addEventListener('input', updatePreview);
     form.total.addEventListener('input', () => {
@@ -625,60 +650,69 @@ function openDebtForm(instId) {
     form.remaining.addEventListener('input', () => {
       form.total.value = fmtNumEditor(sums.paidSum + parseMoney(form.remaining.value));
     });
-    // × — переключатель: пропустить (обнулить) ↔ вернуть прежнюю сумму
-    form.querySelectorAll('[data-del-dpi]').forEach(btn => {
-      btn.title = 'Пропустить / вернуть платёж';
-      btn.onclick = () => {
-        const row = btn.closest('.debt-pay-row');
-        const field = form.querySelector(`[data-dpi="${btn.dataset.delDpi}"]`);
-        if ((parseMoney(field.value) || 0) === 0) {                 // вернуть
-          const orig = payRows[Number(btn.dataset.delDpi)].amount;
-          field.value = fmtNumEditor(row.dataset.prevAmount || orig);
-        } else {                                                    // пропустить
-          row.dataset.prevAmount = parseMoney(field.value);
-          field.value = '0';
+
+    const pays = $('#debt-pays');
+    if (pays) {
+      // смена даты платежа: проверяем уникальность, пересортируем, перерисовываем
+      pays.addEventListener('change', e => {
+        const row = e.target.closest('.debt-pay-row'); if (!row) return;
+        const i = Number(row.dataset.dpi);
+        if (e.target.matches('[data-row-period]')) {
+          const v = e.target.value;
+          if (draftRows.some((r, j) => j !== i && r.period === v)) { renderPayRows(); return; } // дубль — откат
+          draftRows[i].period = v;
+          draftRows.sort(byPeriod);
+          renderPayRows();
         }
-        field.dispatchEvent(new Event('input', { bubbles: true }));
-      };
-    });
-    // «пропущенный» вид = сумма равна 0 (срабатывает и при ручном вводе)
-    form.querySelectorAll('[data-dpi]').forEach(field => {
-      const sync = () => field.closest('.debt-pay-row')
-        .classList.toggle('skipped', (parseMoney(field.value) || 0) === 0);
-      field.addEventListener('input', sync);
-      sync();
-    });
-    // + платёж к существующей рассрочке: запись на ближайшую свободную дату.
-    // Сумма = min(платёж в период, остаток): последний платёж получается ровно остатком.
+      });
+      // правка суммы: без перерисовки (чтобы не терять фокус), только класс + предпросмотр
+      pays.addEventListener('input', e => {
+        const row = e.target.closest('.debt-pay-row'); if (!row) return;
+        const i = Number(row.dataset.dpi);
+        if (e.target.matches('[data-row-amount]')) {
+          draftRows[i].amount = parseMoney(e.target.value) || 0;
+          row.classList.toggle('skipped', draftRows[i].amount === 0);
+        }
+      });
+      // × — пропустить (обнулить) ↔ вернуть прежнюю сумму
+      pays.addEventListener('click', e => {
+        const skip = e.target.closest('[data-row-skip]'); if (!skip) return;
+        const i = Number(skip.closest('.debt-pay-row').dataset.dpi);
+        const r = draftRows[i];
+        if (r.amount === 0) {
+          r.amount = r.prevAmount || r.origAmount || (parseMoney(form.perPeriod.value) || inst.perPeriod || 0);
+        } else {
+          r.prevAmount = r.amount; r.amount = 0;
+        }
+        renderPayRows();
+      });
+    }
+
+    // + платёж: новая строка-черновик на ближайшую свободную дату (сумма = min(платёж, остаток))
     const addPay = $('#debt-add-pay');
-    if (addPay) addPay.onclick = async () => {
-      const used = new Set(payRows.map(p => p.period));
+    if (addPay) addPay.onclick = () => {
+      const used = new Set(draftRows.map(r => r.period));
       const next = allPeriods.find(p => !used.has(p));
       if (!next) { alert('Свободных дат в горизонте больше нет.'); return; }
-      const per = inst.perPeriod || 0;
-      const amount = sums.shortfall > 0 ? Math.min(per || sums.shortfall, sums.shortfall) : per;
-      const rec = {
-        id: uid('m'), period: next, kind: 'expense', name: inst.name,
-        amount: amount > 0 ? amount : (per || 0), bank: inst.bank, paid: false, installmentId: inst.id,
-      };
-      state.records.push(rec);
-      state.records.sort((a, b) => a.period < b.period ? -1 : 1);
-      await putRecord(db, rec);
-      closeModal(); render(); openDebtForm(inst.id);  // переоткрыть с обновлёнными данными
+      const total = parseMoney(form.total.value) || inst.total || 0;
+      const planned = draftRows.reduce((s, r) => s + (r.amount || 0), 0);
+      const remaining = Math.round(total - planned);
+      const per = parseMoney(form.perPeriod.value) || inst.perPeriod || 0;
+      const amount = remaining > 0 ? Math.min(per || remaining, remaining) : per;
+      draftRows.push({ paid: false, period: next, amount: amount > 0 ? amount : (per || 0), origAmount: amount, prevAmount: null, name: inst.name, bank: inst.bank });
+      draftRows.sort(byPeriod);
+      renderPayRows();
     };
 
-    // ↻ пересчитать хвост под новый «платёж в период» (неоплаченные платежи заменяются)
+    // ↻ пересчитать неоплаченный хвост под новый «платёж в период» (только в черновике)
     const recalcBtn = $('#debt-recalc');
-    if (recalcBtn) recalcBtn.onclick = async () => {
+    if (recalcBtn) recalcBtn.onclick = () => {
       const newPer = parseMoney(form.perPeriod.value);
       if (!(newPer > 0)) { alert('Укажите «платёж в период» больше нуля.'); return; }
       const total = parseMoney(form.total.value) || inst.total;
-      const paidPeriods = new Set();
-      let paidSum = 0; const unpaidIds = [];
-      for (const r of state.records) {
-        if (r.installmentId !== inst.id) continue;
-        if (r.paid) { paidPeriods.add(r.period); paidSum += r.amount; } else unpaidIds.push(r.id);
-      }
+      const paidRows = draftRows.filter(r => r.paid);
+      const paidPeriods = new Set(paidRows.map(r => r.period));
+      const paidSum = paidRows.reduce((s, r) => s + r.amount, 0);
       const remaining = Math.max(0, Math.round(total - paidSum));
       if (remaining <= 0) { alert('По рассрочке уже всё оплачено — пересчитывать нечего.'); return; }
       const lastPaid = [...paidPeriods].sort().pop() || (today.slice(0, 7) + '-01');
@@ -687,12 +721,11 @@ function openDebtForm(instId) {
       if (!tail.length) { alert('Нет свободных дат в горизонте для пересчёта.'); return; }
       const lastAmt = tail[tail.length - 1].amount;
       if (!confirm(`Пересчитать под платёж ${fmtMoney(newPer)}?\n\nОстаток ${fmtMoney(remaining)} → ${tail.length} ${plural(tail.length, 'платёж', 'платежа', 'платежей')} (последний ${fmtMoney(lastAmt)}). Текущие неоплаченные платежи будут заменены.`)) return;
-      state.records = state.records.filter(r => !unpaidIds.includes(r.id));
-      for (const id of unpaidIds) await deleteRecord(db, id);
-      Object.assign(inst, { plan: tail, perPeriod: newPer, total });
-      await putInstallment(db, inst);
-      closeModal(); render(); openDebtForm(inst.id);
+      draftRows = [...paidRows, ...tail.map(it => ({ paid: false, period: it.period, amount: it.amount, origAmount: it.amount, prevAmount: null, name: inst.name, bank: inst.bank }))].sort(byPeriod);
+      renderPayRows();
     };
+
+    renderPayRows();
   }
 
   // ── новая: расписание ──
@@ -766,6 +799,21 @@ function openDebtForm(instId) {
     });
   }
 
+  // Черновик существующей рассрочки → state для расчёта ленты (как при «Сохранить»):
+  // убираем неоплаченные записи этой рассрочки, хвост берём из draftRows (план).
+  function draftStateFor() {
+    const records = state.records.filter(r => !(r.installmentId === inst.id && !r.paid));
+    const plan = draftRows.filter(r => !r.paid && r.amount > 0).map(r => ({ period: r.period, amount: r.amount }));
+    const draftInst = {
+      ...inst, plan,
+      total: parseMoney(form.total.value) || inst.total,
+      perPeriod: parseMoney(form.perPeriod.value) || inst.perPeriod,
+      bank: selectedBank(), name: form.name.value || inst.name,
+    };
+    const installments = state.installments.map(x => x.id === inst.id ? draftInst : x);
+    return { ...state, records, installments };
+  }
+
   // Предпросмотр + нагрузка на каждую дату.
   function updatePreview() {
     if (isNew) {  // «+ платёж» недоступна, когда расписание уже покрывает общую сумму
@@ -773,46 +821,57 @@ function openDebtForm(instId) {
       const sum = schedule.reduce((s, x) => s + (x.amount || 0), 0);
       const addBtn = $('#sched-add');
       if (addBtn) { addBtn.disabled = t > 0 && sum >= t - 0.5; addBtn.title = addBtn.disabled ? 'Всё распределено' : ''; }
+    } else {       // «+ платёж» недоступна, когда черновик покрывает общую сумму
+      const t = parseMoney(form.total.value) || inst.total || 0;
+      const planned = draftRows.reduce((s, r) => s + (r.amount || 0), 0);
+      const addBtn = $('#debt-add-pay');
+      if (addBtn) { addBtn.disabled = t > 0 && planned >= t - 0.5; addBtn.title = addBtn.disabled ? 'Всё распределено' : ''; }
     }
     const box = $('#debt-preview');
-    const plan = (isNew ? schedule : payRows.map(p => ({ period: p.period, amount: p.amount })))
+    const plan = (isNew ? schedule : draftRows.map(r => ({ period: r.period, amount: r.amount })))
       .filter(it => it.amount > 0);
-    if (!plan.length) { if (box) box.hidden = true; return; }
 
     const draft = isNew
       ? { id: 'draft', name: form.name.value || 'рассрочка', total: plan.reduce((s, x) => s + x.amount, 0), perPeriod: parseMoney(form.perPeriod.value) || 0, bank: selectedBank(), plan }
       : null;
-    const draftState = isNew ? { ...state, installments: [...state.installments, draft] } : state;
+    const draftState = isNew ? { ...state, installments: [...state.installments, draft] } : draftStateFor();
     const draftTl = buildTimeline(draftState, horizonEnd());
 
-    // нагрузка на дату в строках расписания (новая рассрочка)
+    // нагрузка на дату в строках расписания / платежей
     if (isNew) {
       $$('#sched-list .sched-row').forEach(rowEl => {
         const i = Number(rowEl.dataset.si);
         const day = draftTl.get(schedule[i]?.period);
         rowEl.querySelector('[data-sched-load]').innerHTML = loadBadge(day ? day.load : null);
       });
+    } else {
+      $$('#debt-pays .debt-pay-row').forEach(rowEl => {
+        const i = Number(rowEl.dataset.dpi);
+        const day = draftTl.get(draftRows[i]?.period);
+        rowEl.querySelector('[data-row-load]').innerHTML = loadBadge(day ? day.load : null);
+      });
     }
     if (!box) return;
+    if (!plan.length) { box.hidden = true; return; }
 
     const n = plan.length;
     const closeP = plan[plan.length - 1].period;
     const last = plan[plan.length - 1].amount;
     const planSum = plan.reduce((s, x) => s + x.amount, 0);
-    const enteredTotal = isNew ? (parseMoney(form.total.value) || planSum) : planSum;
+    const enteredTotal = isNew ? (parseMoney(form.total.value) || planSum)
+      : (parseMoney(form.total.value) || inst.total || planSum);
     const shortfall = Math.round(enteredTotal - planSum);
     const diffs = [];
-    if (isNew) {
-      for (const day of draftTl.values()) {
-        const before = timeline.get(day.period);
-        if (before && day.load != null && Math.round(day.load * 100) !== Math.round((before.load ?? 0) * 100)) {
-          diffs.push({ p: day.period, from: before.load ?? 0, to: day.load, zone: loadZone(day.load) });
-        }
+    for (const day of draftTl.values()) {
+      const before = timeline.get(day.period);
+      if (before && day.load != null && Math.round(day.load * 100) !== Math.round((before.load ?? 0) * 100)) {
+        diffs.push({ p: day.period, from: before.load ?? 0, to: day.load, zone: loadZone(day.load) });
       }
     }
     box.hidden = false;
+    const recalcHint = isNew ? '«↻ авто»' : '«↻ Пересчитать»';
     const head = shortfall > 0
-      ? `<div class="warn">⚠ Расписание покрывает ${fmtMoney(planSum)} из ${fmtMoney(enteredTotal)} — не хватает платежей на <b>${fmtMoney(shortfall)}</b>. Нажмите «↻ авто» или «+ платёж».</div>`
+      ? `<div class="warn">⚠ Платежи покрывают ${fmtMoney(planSum)} из ${fmtMoney(enteredTotal)} — не хватает на <b>${fmtMoney(shortfall)}</b>. Нажмите ${recalcHint} или «+ платёж».</div>`
       : `<div><b>${n}</b> ${plural(n, 'платёж', 'платежа', 'платежей')} · последний ${fmtMoney(last)} · закроется <b>${fmtPeriodFull(closeP)}</b></div>`;
     box.innerHTML = `
       ${head}
@@ -852,20 +911,24 @@ function openDebtForm(instId) {
       state.installments.push(rec);
       await putInstallment(db, rec);
     } else {
-      for (const el of form.querySelectorAll('[data-dpi]')) {
-        const p = payRows[Number(el.dataset.dpi)];
-        const amount = parseMoney(el.value);
-        if (!Number.isFinite(amount) || amount === p.amount) continue;
-        if (p.virtual) {
-          await materialize(p.period, p, { amount });
-        } else {
-          const rec = state.records.find(r => r.id === p.id);
-          rec.amount = amount;
-          await putRecord(db, rec);
-        }
+      // применяем черновик: даты уникальны, неоплаченный хвост пересобираем как plan,
+      // оплаченные записи не трогаем (они в state.records и в plan не попадают)
+      const periods = draftRows.map(r => r.period);
+      if (new Set(periods).size !== periods.length) { alert('У платежей повторяются даты — сделайте их уникальными.'); return; }
+      const total = parseMoney(form.total.value) || inst.total;
+      const plan = draftRows.filter(r => !r.paid && r.amount > 0)
+        .map(r => ({ period: r.period, amount: r.amount }))
+        .sort((a, b) => a.period < b.period ? -1 : 1);
+      const planSum = plan.reduce((s, x) => s + x.amount, 0);
+      const paidSum = draftRows.filter(r => r.paid).reduce((s, r) => s + r.amount, 0);
+      if (paidSum + planSum < total - 0.5) {
+        if (!confirm(`Платежи покрывают ${fmtMoney(paidSum + planSum)} из ${fmtMoney(total)} — не хватает на ${fmtMoney(total - paidSum - planSum)}.\n\nСохранить как есть? Платежи можно добавить позже.`)) return;
       }
-      const val = parseMoney(form.total.value);
-      Object.assign(inst, { name, perPeriod: per, bank: selectedBank(), total: val });
+      // выбрасываем прежние неоплаченные записи рассрочки — их роль теперь играет plan
+      const dropIds = state.records.filter(r => r.installmentId === inst.id && !r.paid).map(r => r.id);
+      state.records = state.records.filter(r => !dropIds.includes(r.id));
+      for (const id of dropIds) await deleteRecord(db, id);
+      Object.assign(inst, { name, perPeriod: per || inst.perPeriod, bank: selectedBank(), total, plan });
       await putInstallment(db, inst);
     }
     closeModal(); render();
