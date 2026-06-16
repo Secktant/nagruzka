@@ -523,10 +523,14 @@ function openDebtForm(instId) {
   const today = todayISO();
 
   const allPeriods = generatePeriods(today.slice(0, 7) + '-01', horizonEnd());
+  // ближайший будущий период (>= сегодня): авто-платежи ставим только сюда и дальше,
+  // чтобы не назначить на уже прошедшую дату (напр. сегодня 16-е, а период 15-е — вчера)
+  const firstFuture = allPeriods.find(p => p >= today) || allPeriods[0];
   // used — даты, занятые другими строками: их в выпадашке делаем недоступными (без дублей)
   const periodOptions = (sel, used) => {
-    // текущая дата строки всегда в списке (вдруг платёж просрочен и его период < сегодня)
-    const list = (sel && !allPeriods.includes(sel)) ? [sel, ...allPeriods].sort() : allPeriods;
+    // прошлые периоды не предлагаем; но текущую дату строки оставляем (вдруг платёж просрочен)
+    const base = allPeriods.filter(p => p >= today || p === sel);
+    const list = (sel && !base.includes(sel)) ? [sel, ...base].sort() : base;
     return list
       .map(p => `<option value="${p}" ${p === sel ? 'selected' : ''} ${used && used.has(p) && p !== sel ? 'disabled' : ''}>${fmtPeriodFull(p)}</option>`).join('');
   };
@@ -597,11 +601,11 @@ function openDebtForm(instId) {
     <div class="lbl-like">Платежи по рассрочке</div>
     <div class="debt-pays" id="debt-pays"></div>
     ${locked ? '' : `<button type="button" class="btn small" id="debt-add-pay">+ платёж</button>
-    <p class="hint">Суммы и даты можно поправить — дату меняйте в выпадашке периода. «×» — пропустить
+    <p class="hint">Суммы и даты можно поправить — дату меняйте в выпадашке периода. «×» — удалить
     платёж. Изменения применяются по «Сохранить» (до этого «Отмена» всё откатит).</p>`}` : ''}
     ${isNew ? `
     <label>Первый платёж
-      <select name="firstPeriod">${periodOptions(allPeriods[0])}</select>
+      <select name="firstPeriod">${periodOptions(firstFuture)}</select>
     </label>
     <div class="sched-head">
       <span class="lbl-like">Расписание платежей</span>
@@ -637,7 +641,7 @@ function openDebtForm(instId) {
           : `<select data-row-period title="Перенести на другую дату">${periodOptions(r.period, used)}</select>`}
         <span class="dp-load" data-row-load></span>
         ${moneyInput('', r.amount, `data-row-amount aria-label="Сумма платежа" ${r.paid ? 'disabled' : ''}`)}
-        ${r.paid ? '<span></span>' : `<button type="button" class="icon-btn danger" data-row-skip title="Пропустить / вернуть платёж">×</button>`}
+        ${r.paid ? '<span></span>' : `<button type="button" class="icon-btn danger" data-row-del title="Удалить платёж">×</button>`}
       </div>`).join('') || '<div class="empty small">Платежей пока нет</div>';
     updatePreview();
   }
@@ -674,16 +678,11 @@ function openDebtForm(instId) {
           row.classList.toggle('skipped', draftRows[i].amount === 0);
         }
       });
-      // × — пропустить (обнулить) ↔ вернуть прежнюю сумму
+      // × — удалить платёж из черновика (дата освобождается, её можно занять заново)
       pays.addEventListener('click', e => {
-        const skip = e.target.closest('[data-row-skip]'); if (!skip) return;
-        const i = Number(skip.closest('.debt-pay-row').dataset.dpi);
-        const r = draftRows[i];
-        if (r.amount === 0) {
-          r.amount = r.prevAmount || r.origAmount || (parseMoney(form.perPeriod.value) || inst.perPeriod || 0);
-        } else {
-          r.prevAmount = r.amount; r.amount = 0;
-        }
+        const del = e.target.closest('[data-row-del]'); if (!del) return;
+        const i = Number(del.closest('.debt-pay-row').dataset.dpi);
+        draftRows.splice(i, 1);
         renderPayRows();
       });
     }
@@ -692,7 +691,7 @@ function openDebtForm(instId) {
     const addPay = $('#debt-add-pay');
     if (addPay) addPay.onclick = () => {
       const used = new Set(draftRows.map(r => r.period));
-      const next = allPeriods.find(p => !used.has(p));
+      const next = allPeriods.find(p => p >= today && !used.has(p));
       if (!next) { alert('Свободных дат в горизонте больше нет.'); return; }
       const total = parseMoney(form.total.value) || inst.total || 0;
       const planned = draftRows.reduce((s, r) => s + (r.amount || 0), 0);
@@ -715,8 +714,10 @@ function openDebtForm(instId) {
       const paidSum = paidRows.reduce((s, r) => s + r.amount, 0);
       const remaining = Math.max(0, Math.round(total - paidSum));
       if (remaining <= 0) { alert('По рассрочке уже всё оплачено — пересчитывать нечего.'); return; }
-      const lastPaid = [...paidPeriods].sort().pop() || (today.slice(0, 7) + '-01');
-      const startFrom = allPeriods.find(p => p > lastPaid && !paidPeriods.has(p)) || allPeriods.find(p => !paidPeriods.has(p));
+      const lastPaid = [...paidPeriods].sort().pop() || '';
+      // старт хвоста — ближайший будущий период (>= сегодня), после последнего оплаченного
+      const startFrom = allPeriods.find(p => p >= today && p > lastPaid && !paidPeriods.has(p))
+        || allPeriods.find(p => p >= today && !paidPeriods.has(p));
       const tail = startFrom ? autoSchedule(remaining, newPer, startFrom).filter(it => !paidPeriods.has(it.period)) : [];
       if (!tail.length) { alert('Нет свободных дат в горизонте для пересчёта.'); return; }
       const lastAmt = tail[tail.length - 1].amount;
