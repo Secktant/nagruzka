@@ -93,8 +93,10 @@ function todayISO() {
   return `${TODAY.getFullYear()}-${String(TODAY.getMonth() + 1).padStart(2, '0')}-${String(TODAY.getDate()).padStart(2, '0')}`;
 }
 function horizonEnd() {
-  const d = new Date(TODAY.getFullYear(), TODAY.getMonth() + HORIZON_MONTHS, 28);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-28`;
+  // последний день месяца через HORIZON_MONTHS — чтобы последний месяц был ПОЛНЫМ
+  // (иначе обрывались на 28-м и терялся период конца месяца, 31-е → месяц неполный в графике)
+  const d = new Date(TODAY.getFullYear(), TODAY.getMonth() + HORIZON_MONTHS + 1, 0);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 function fmtPeriodFull(p) {
   return `${fmtPeriod(p)} ${p.slice(0, 4)}`;
