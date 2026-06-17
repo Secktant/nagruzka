@@ -151,6 +151,21 @@ body {
 .pay-amount { font-weight: 600; font-variant-numeric: tabular-nums; }
 .pay.paid .pay-amount { color: var(--muted); font-weight: 500; }
 
+.pay-type {
+  flex: none;
+  width: 18px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1;
+}
+.pay-legend {
+  display: flex; flex-wrap: wrap; gap: 14px;
+  font-size: 12px; color: var(--muted);
+  margin: 0 2px 12px;
+}
+.pay-legend span { display: inline-flex; align-items: center; gap: 3px; }
+.pay-legend .pay-type { width: auto; }
+.pay.paid .pay-type { opacity: .5; }
 .inst-tag {
   font-size: 11px;
   color: var(--accent);

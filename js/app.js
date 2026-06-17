@@ -129,7 +129,12 @@ function renderPeriods() {
     return;
   }
   const today = todayISO();
-  container.innerHTML = days.map(d => periodCard(d, today)).join('');
+  const legend = `<div class="pay-legend">
+    <span><span class="pay-type">🔁</span> постоянный</span>
+    <span><span class="pay-type">💳</span> рассрочка</span>
+    <span><span class="pay-type">💵</span> разовый</span>
+  </div>`;
+  container.innerHTML = legend + days.map(d => periodCard(d, today)).join('');
 
   container.querySelectorAll('input[type=checkbox][data-pay]').forEach(cb => {
     cb.addEventListener('change', () => togglePaid(cb.dataset.pay, cb.checked));
@@ -193,6 +198,14 @@ function payKey(p) {
   return p.virtual ? `v|${p.regularId || p.installmentId}` : `r|${p.id}`;
 }
 
+// Тип платежа → иконка-маркер (постоянный / из рассрочки / разовый)
+function payTypeMark(p) {
+  const m = p.regularId ? ['reg', '🔁', 'Постоянный платёж']
+    : p.installmentId ? ['inst', '💳', 'Платёж по рассрочке']
+    : ['once', '💵', 'Разовый платёж'];
+  return `<span class="pay-type ${m[0]}" title="${m[2]}" aria-label="${m[2]}">${m[1]}</span>`;
+}
+
 function paymentRow(period, p) {
   const progress = p.instProgress
     ? `<span class="inst-tag">${p.instProgress.paidCount}/${p.instProgress.totalCount}</span>` : '';
@@ -201,6 +214,7 @@ function paymentRow(period, p) {
   <div class="pay ${p.paid ? 'paid' : ''}">
     <input type="checkbox" data-pay="${esc(`${period}|${payKey(p)}`)}" ${p.paid ? 'checked' : ''}>
     <span class="pay-main clickable" data-edit-pay="${esc(payKey(p))}" data-period="${period}" title="Править платёж">
+      ${payTypeMark(p)}
       <span class="pay-name">${esc(p.name)}${progress}${bank}</span>
       <span class="pay-amount ${p.amount < 0 ? 'neg' : ''}">${fmtMoney(p.amount)}</span>
     </span>
