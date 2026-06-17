@@ -159,9 +159,10 @@ body {
   line-height: 1;
 }
 .pay-legend {
+  grid-column: 1 / -1;   /* во всю ширину сетки, не занимать ячейку карточки */
   display: flex; flex-wrap: wrap; gap: 14px;
   font-size: 12px; color: var(--muted);
-  margin: 0 2px 12px;
+  margin: -2px 2px 4px;
 }
 .pay-legend span { display: inline-flex; align-items: center; gap: 3px; }
 .pay-legend .pay-type { width: auto; }
