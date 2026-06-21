@@ -1771,6 +1771,14 @@ async function main() {
   let zoom = applyZoom(parseFloat(localStorage.getItem('zoom')) || 1);
   $('#zoom-in').onclick = () => { zoom = applyZoom(zoom + 0.1); };
   $('#zoom-out').onclick = () => { zoom = applyZoom(zoom - 0.1); };
+  // хоткеи Cmd/Ctrl +/−/0 ведём через НАШ масштаб (и глушим браузерный зум,
+  // иначе два зума складываются и счётчик не совпадает)
+  window.addEventListener('keydown', e => {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey) return;
+    if (e.key === '=' || e.key === '+')      { e.preventDefault(); zoom = applyZoom(zoom + 0.1); }
+    else if (e.key === '-' || e.key === '_') { e.preventDefault(); zoom = applyZoom(zoom - 0.1); }
+    else if (e.key === '0')                  { e.preventDefault(); zoom = applyZoom(1); }
+  });
   $$('.tab').forEach(t => t.addEventListener('click', () => { view.tab = t.dataset.tab; render(); }));
   $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
   $('#modal-close').onclick = closeModal;
