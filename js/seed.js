@@ -4,12 +4,12 @@
 // Грузится один раз при пустой базе. Свой бэкап — Настройки → Импорт.
 export const SEED = {
   settings: {
-    salary: 70000,
+    salary: 50000,
     banks: ['Альфа', 'Озон', 'Тбанк', 'Яндекс', 'ВТБ'],
     startPeriod: '2026-01-15',
   },
   regulars: [
-    { id: 'reg-salary',   name: 'Зарплата',   kind: 'income',  amount: 70000, schedule: 'both', bank: null, active: true },
+    { id: 'reg-salary',   name: 'Зарплата',   kind: 'income',  amount: 50000, schedule: 'both', bank: null, active: true },
     { id: 'reg-rent',     name: 'Аренда',     kind: 'expense', amount: 30000, schedule: 'mid',  bank: null, active: true },
     { id: 'reg-utility',  name: 'Коммуналка', kind: 'expense', amount: 5000,  schedule: 'mid',  bank: null, active: true },
     { id: 'reg-internet', name: 'Интернет',   kind: 'expense', amount: 700,   schedule: 'mid',  bank: 'Тбанк', active: true },
