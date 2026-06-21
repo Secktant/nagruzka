@@ -313,6 +313,8 @@ function openPaymentForm(period, key) {
   const names = [...new Set(state.records
     .filter(r => r.kind === 'expense' && !r.skipped).map(r => r.name).reverse())];
 
+  // разовый платёж (можно делать отрицательным = «мне должны»)
+  const isOneOff = isNew || (!p?.regularId && !p?.installmentId);
   // перенос на другую дату — только для обычного разового платежа
   const canMove = !isNew && !isVirtual && !p.installmentId && !p.regularId;
   const movePeriods = canMove ? generatePeriods(state.settings.startPeriod, horizonEnd()) : [];
@@ -331,7 +333,7 @@ function openPaymentForm(period, key) {
     <label>Сумма, ₽
       ${moneyInput('amount', p ? p.amount : '', 'placeholder="5 000" required')}
     </label>
-    ${(isNew || (!p?.regularId && !p?.installmentId)) ? `<p class="hint">Минус — если это деньги, которые <b>должны вам</b> (вернётся): уменьшит нагрузку периода.</p>` : ''}
+    ${isOneOff ? `<p class="hint" id="owe-hint" hidden>Минус — это деньги, которые <b>должны вам</b> (вернётся): уменьшит нагрузку периода.</p>` : ''}
     <div class="lbl-like">Банк</div>
     ${bankChipsHTML(p?.bank || null)}
     ${canMove ? `<label style="margin-top:12px">Дата
@@ -347,6 +349,18 @@ function openPaymentForm(period, key) {
 
   wireBankChips();
   $('#modal-cancel').onclick = closeModal;
+
+  // подсказку про минус показываем только когда в сумме реально стоит минус
+  const oweHint = $('#owe-hint');
+  const amtInp = $('#pay-form [name=amount]');
+  if (oweHint && amtInp) {
+    const syncHint = () => {
+      const v = amtInp.value.trim();
+      oweHint.hidden = !(v.startsWith('-') || v.startsWith('−'));
+    };
+    amtInp.addEventListener('input', syncHint);
+    syncHint(); // при правке уже отрицательной записи — показать сразу
+  }
 
   const delBtn = $('#pay-delete');
   if (delBtn) delBtn.onclick = async () => {
@@ -380,7 +394,6 @@ function openPaymentForm(period, key) {
     if (!name) return; // поле name с required — пустым сюда не дойдёт
     // разовый платёж может быть отрицательным (это «мне должны» — уменьшает нагрузку);
     // регулярные/рассрочки — строго больше нуля
-    const isOneOff = isNew || (!p?.regularId && !p?.installmentId);
     if (!Number.isFinite(amount) || amount === 0 || (!isOneOff && amount < 0)) {
       const inp = e.target.querySelector('[name=amount]');
       inp?.setCustomValidity(isOneOff ? 'Сумма не может быть нулём (минус — если деньги должны вам)' : 'Введите сумму больше нуля');
@@ -1302,11 +1315,6 @@ async function renderSettings() {
         <button class="btn" id="enc-import-btn">🔓 Загрузить зашифрованную</button>
         <input type="file" id="enc-import-file" hidden>
       </div>
-      <p class="hint">Файл <code>.nz</code> зашифрован Argon2id + AES-256-GCM. Можно слать через
-      AirDrop / iCloud Drive. <b>keyfile</b> — отдельный файл-ключ: держите его только на своих
-      устройствах. Для разовой настройки AirDrop — ок; для регулярной пересылки через почту/облако
-      keyfile вместе с <code>.nz</code> не шлите. Пароль нигде не хранится — запишите его в
-      менеджер паролей, без него копию не открыть.</p>
     </section>
 
     ${syncConfigured() ? `
@@ -1333,12 +1341,10 @@ async function renderSettings() {
              <button class="btn" id="sync-pass">Сменить пароль</button>`
           : `<button class="btn primary" id="sync-on" ${(!sid || !kf) ? 'disabled' : ''}>▶ Включить синхронизацию</button>`}
       </div>
-      <p class="hint">
+      ${(!sid || !kf) ? `<p class="hint">
         ${!sid ? 'Создай Sync ID на одном устройстве, «Скопировать» → на втором «Вставить» тот же. ' : ''}
-        ${!kf ? '<b>Нужен keyfile</b> (выше) — без него синк не расшифровать. ' : ''}
-        Включение спросит пароль и запомнит синк на этом устройстве (сам пароль не хранится). На
-        сервер уезжает только шифротекст — Supabase данные прочитать не может. Изменения
-        подхватываются автоматически.</p>
+        ${!kf ? '<b>Нужен keyfile</b> (выше) — без него синк не расшифровать.' : ''}
+      </p>` : ''}
     </section>` : ''}`;
 
   $('#salary-input').addEventListener('input', async e => {
@@ -1687,10 +1693,10 @@ function updateConnBanner(s) {
   if (s === 'off' || s === 'locked') { hideToast(); prevConn = null; return; }
   if (s === 'conflict') { showToast('warn', 'Был конфликт — взято свежее', 3000); return; }
   if (s === 'synced') {
-    if (prevConn !== 'synced') showToast('ok', '✓ Сервер на связи', 2500); // первый раз / после сбоя
+    if (prevConn !== 'synced') showToast('ok', 'Соединение установлено', 2500); // первый раз / после сбоя
     prevConn = 'synced'; return;
   }
-  if (s === 'offline') { showToast('bad', '⚠ Сервер недоступен — синк на паузе', 0); prevConn = 'offline'; return; }
+  if (s === 'offline') { showToast('bad', 'Синхронизация приостановлена', 0); prevConn = 'offline'; return; }
   if (s === 'error')   { showToast('bad', '⚠ Не удалось расшифровать — проверь пароль/keyfile', 0); prevConn = 'error'; return; }
 }
 
