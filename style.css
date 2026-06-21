@@ -549,3 +549,10 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   .brand small { display: none; }
   .brand { white-space: nowrap; }
 }
+
+/* Десктоп: на экране «Периоды» снимаем ограничение ширины, чтобы лента карточек
+   заняла всё окно (сетка #periods сама даёт «сколько влезет» колонок). Только когда
+   видны Периоды (:has) — остальные вкладки остаются компактными. Нет :has → 920px. */
+@media (min-width: 1180px) {
+  .shell:has(#view-periods:not([hidden])) { max-width: 1760px; }
+}

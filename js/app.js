@@ -122,10 +122,16 @@ function render() {
 function renderPeriods() {
   $('#month-title').textContent = fmtMonth(view.y, view.m);
   const prefix = `${view.y}-${String(view.m).padStart(2, '0')}`;
-  const days = [...timeline.values()].filter(d => d.period.startsWith(prefix));
+  const monthStart = `${prefix}-01`;
+  // широкий экран — показываем ленту вперёд от выбранного месяца (колонок «сколько влезет»);
+  // узкий (телефон) — один месяц, как раньше. Режим по ширине окна, не по user-agent.
+  const wide = window.matchMedia('(min-width: 1180px)').matches;
+  const days = wide
+    ? [...timeline.values()].filter(d => d.period >= monthStart)
+    : [...timeline.values()].filter(d => d.period.startsWith(prefix));
   const container = $('#periods');
   if (!days.length) {
-    container.innerHTML = `<div class="empty">Нет периодов в этом месяце — история начинается с января 2026.</div>`;
+    container.innerHTML = `<div class="empty">Нет периодов впереди — пролистай ‹ назад. История с января 2026.</div>`;
     return;
   }
   const today = todayISO();
@@ -1724,6 +1730,10 @@ async function main() {
   $$('.tab').forEach(t => t.addEventListener('click', () => { view.tab = t.dataset.tab; render(); }));
   $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
   $('#modal-close').onclick = closeModal;
+  // пересечение порога ширины (узкий ↔ широкий) — перерисовать «Периоды» в нужном режиме
+  window.matchMedia('(min-width: 1180px)').addEventListener('change', () => {
+    if (view.tab === 'periods') renderPeriods();
+  });
   wireMoneyInputs(document);
   render();
 }
