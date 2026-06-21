@@ -155,6 +155,34 @@ function renderPeriods() {
   container.querySelectorAll('[data-edit-income]').forEach(el => {
     el.addEventListener('click', () => openIncomeForm(el.dataset.editIncome));
   });
+
+  // перетаскивание разовых платежей между периодами (десктоп; на тач-устройствах
+  // нативный HTML5-DnD не стартует — там перенос через форму платежа)
+  container.querySelectorAll('[draggable=true][data-rec]').forEach(h => {
+    h.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', JSON.stringify({ id: h.dataset.rec, src: h.dataset.src }));
+      e.dataTransfer.effectAllowed = 'move';
+      h.closest('.pay')?.classList.add('dragging');
+    });
+    h.addEventListener('dragend', () => h.closest('.pay')?.classList.remove('dragging'));
+  });
+  container.querySelectorAll('[data-drop-period]').forEach(card => {
+    card.addEventListener('dragover', e => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; card.classList.add('drop-target'); });
+    card.addEventListener('dragleave', e => { if (!card.contains(e.relatedTarget)) card.classList.remove('drop-target'); });
+    card.addEventListener('drop', async e => {
+      e.preventDefault();
+      card.classList.remove('drop-target');
+      let data; try { data = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
+      const target = card.dataset.dropPeriod;
+      if (!data?.id || !target || target === data.src) return;
+      const rec = state.records.find(r => r.id === data.id);
+      if (!rec) return;
+      rec.period = target;
+      state.records.sort((a, b) => a.period < b.period ? -1 : 1);
+      await putRecord(db, rec);
+      render();
+    });
+  });
 }
 
 function periodCard(d, today) {
@@ -173,7 +201,7 @@ function periodCard(d, today) {
   }).join('');
 
   return `
-  <section class="card ${isCurrent ? 'current' : ''}">
+  <section class="card ${isCurrent ? 'current' : ''}" data-drop-period="${d.period}">
     <header class="card-head">
       <div class="card-date">${fmtPeriod(d.period)}${isCurrent ? '<span class="now-dot" title="ближайший период"></span>' : ''}</div>
       <div class="head-right">
@@ -219,10 +247,13 @@ function paymentRow(period, p) {
   const progress = p.instProgress
     ? `<span class="inst-tag">${p.instProgress.paidCount}/${p.instProgress.totalCount}</span>` : '';
   const bank = p.bank ? `<span class="bank-tag">${esc(p.bank)}</span>` : '';
+  // разовый платёж (не виртуальный, не регуляр, не рассрочка) можно перетащить в другой период
+  const movable = !p.virtual && !p.regularId && !p.installmentId;
+  const drag = movable ? `draggable="true" data-rec="${p.id}" data-src="${period}"` : '';
   return `
-  <div class="pay ${p.paid ? 'paid' : ''}">
+  <div class="pay ${p.paid ? 'paid' : ''} ${movable ? 'movable' : ''}">
     <input type="checkbox" data-pay="${esc(`${period}|${payKey(p)}`)}" ${p.paid ? 'checked' : ''}>
-    <span class="pay-main clickable" data-edit-pay="${esc(payKey(p))}" data-period="${period}" title="Править платёж">
+    <span class="pay-main clickable" data-edit-pay="${esc(payKey(p))}" data-period="${period}" ${drag} title="${movable ? 'Тащи в другой период или кликни, чтобы править' : 'Править платёж'}">
       ${payTypeMark(p)}
       <span class="pay-name">${esc(p.name)}${progress}${bank}</span>
       <span class="pay-amount ${p.amount < 0 ? 'neg' : ''}">${fmtMoney(p.amount)}</span>
@@ -1727,6 +1758,19 @@ async function main() {
   }
   $('#prev-month').addEventListener('click', () => shiftMonth(-1));
   $('#next-month').addEventListener('click', () => shiftMonth(1));
+
+  // масштаб контента (только .view — топбар/таббар не трогаем). Хранится в localStorage.
+  const clampZoom = z => Math.min(1.6, Math.max(0.6, Math.round(z * 10) / 10));
+  function applyZoom(z) {
+    z = clampZoom(z);
+    $$('.view').forEach(v => { v.style.zoom = z; });
+    const el = $('#zoom-val'); if (el) el.textContent = Math.round(z * 100) + '%';
+    localStorage.setItem('zoom', String(z));
+    return z;
+  }
+  let zoom = applyZoom(parseFloat(localStorage.getItem('zoom')) || 1);
+  $('#zoom-in').onclick = () => { zoom = applyZoom(zoom + 0.1); };
+  $('#zoom-out').onclick = () => { zoom = applyZoom(zoom - 0.1); };
   $$('.tab').forEach(t => t.addEventListener('click', () => { view.tab = t.dataset.tab; render(); }));
   $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
   $('#modal-close').onclick = closeModal;

@@ -21,10 +21,17 @@
   <div class="shell">
     <div class="topbar">
       <div class="brand">Нагрузка</div>
-      <div class="month-nav" id="month-nav">
-        <button id="prev-month" aria-label="Предыдущий месяц">‹</button>
-        <div id="month-title"></div>
-        <button id="next-month" aria-label="Следующий месяц">›</button>
+      <div class="topbar-right">
+        <div class="zoom-ctl" id="zoom-ctl" title="Масштаб">
+          <button id="zoom-out" type="button" aria-label="Уменьшить">−</button>
+          <span id="zoom-val">100%</span>
+          <button id="zoom-in" type="button" aria-label="Увеличить">+</button>
+        </div>
+        <div class="month-nav" id="month-nav">
+          <button id="prev-month" aria-label="Предыдущий месяц">‹</button>
+          <div id="month-title"></div>
+          <button id="next-month" aria-label="Следующий месяц">›</button>
+        </div>
       </div>
     </div>
 
