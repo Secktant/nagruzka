@@ -132,7 +132,8 @@ body {
 }
 .stats .lbl { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
 .stats .val { font-weight: 600; font-size: 14px; }
-.val.neg, .pay-amount.neg { color: var(--red); }
+.val.neg { color: var(--red); }                  /* отрицательный баланс (с переносом) — плохо */
+.pay-amount.neg { color: var(--green); }          /* минус у платежа = «мне должны» — хорошо */
 
 .payments { border-top: 1px solid var(--border); }
 

@@ -133,6 +133,7 @@ function renderPeriods() {
     <span><span class="pay-type">🔁</span> постоянный</span>
     <span><span class="pay-type">💳</span> рассрочка</span>
     <span><span class="pay-type">💵</span> разовый</span>
+    <span><span class="pay-type">🤝</span> мне должны</span>
   </div>`;
   container.innerHTML = legend + days.map(d => periodCard(d, today)).join('');
 
@@ -198,9 +199,11 @@ function payKey(p) {
   return p.virtual ? `v|${p.regularId || p.installmentId}` : `r|${p.id}`;
 }
 
-// Тип платежа → иконка-маркер (постоянный / из рассрочки / разовый)
+// Тип платежа → иконка-маркер (постоянный / из рассрочки / разовый / «мне должны»)
 function payTypeMark(p) {
-  const m = p.regularId ? ['reg', '🔁', 'Постоянный платёж']
+  const owed = !p.regularId && !p.installmentId && p.amount < 0;  // дебиторка: разовый минус
+  const m = owed ? ['owed', '🤝', 'Вам должны (вернётся)']
+    : p.regularId ? ['reg', '🔁', 'Постоянный платёж']
     : p.installmentId ? ['inst', '💳', 'Платёж по рассрочке']
     : ['once', '💵', 'Разовый платёж'];
   return `<span class="pay-type ${m[0]}" title="${m[2]}" aria-label="${m[2]}">${m[1]}</span>`;
@@ -328,6 +331,7 @@ function openPaymentForm(period, key) {
     <label>Сумма, ₽
       ${moneyInput('amount', p ? p.amount : '', 'placeholder="5 000" required')}
     </label>
+    ${(isNew || (!p?.regularId && !p?.installmentId)) ? `<p class="hint">Минус — если это деньги, которые <b>должны вам</b> (вернётся): уменьшит нагрузку периода.</p>` : ''}
     <div class="lbl-like">Банк</div>
     ${bankChipsHTML(p?.bank || null)}
     ${canMove ? `<label style="margin-top:12px">Дата
@@ -374,9 +378,12 @@ function openPaymentForm(period, key) {
     const amount = parseMoney(f.get('amount'));
     const bank = selectedBank();
     if (!name) return; // поле name с required — пустым сюда не дойдёт
-    if (!Number.isFinite(amount) || amount <= 0) {
+    // разовый платёж может быть отрицательным (это «мне должны» — уменьшает нагрузку);
+    // регулярные/рассрочки — строго больше нуля
+    const isOneOff = isNew || (!p?.regularId && !p?.installmentId);
+    if (!Number.isFinite(amount) || amount === 0 || (!isOneOff && amount < 0)) {
       const inp = e.target.querySelector('[name=amount]');
-      inp?.setCustomValidity('Введите сумму больше нуля');
+      inp?.setCustomValidity(isOneOff ? 'Сумма не может быть нулём (минус — если деньги должны вам)' : 'Введите сумму больше нуля');
       inp?.reportValidity();
       inp?.addEventListener('input', () => inp.setCustomValidity(''), { once: true });
       return;
