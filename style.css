@@ -575,5 +575,8 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
    заняла всё окно (сетка #periods сама даёт «сколько влезет» колонок). Только когда
    видны Периоды (:has) — остальные вкладки остаются компактными. Нет :has → 920px. */
 @media (min-width: 1180px) {
-  .shell:has(#view-periods:not([hidden])) { max-width: 1760px; }
+  /* один месяц @150%: zoom ужимает логич. ширину, поэтому даём ~1120px → ровно 2 колонки. */
+  .shell:has(#view-periods:not([hidden])) { max-width: 1120px; }
+  /* режим прогноза (лента года) — широко, колонок «сколько влезет». */
+  .shell.forecast-mode:has(#view-periods:not([hidden])) { max-width: 1760px; }
 }
