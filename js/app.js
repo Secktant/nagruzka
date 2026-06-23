@@ -164,11 +164,15 @@ function renderPeriods() {
     el.addEventListener('click', () => openIncomeForm(el.dataset.editIncome));
   });
 
-  // перетаскивание разовых платежей между периодами (десктоп; на тач-устройствах
-  // нативный HTML5-DnD не стартует — там перенос через форму платежа)
-  container.querySelectorAll('[draggable=true][data-rec]').forEach(h => {
+  // перетаскивание платежей между периодами (десктоп; на тач-устройствах нативный
+  // HTML5-DnD не стартует — там перенос через форму). Разовый — двигаем запись;
+  // платёж рассрочки — пере-датируем (виртуальный слот плана / реальную запись).
+  const byPeriodAsc = (a, b) => a.period < b.period ? -1 : 1;
+  container.querySelectorAll('[draggable=true][data-src]').forEach(h => {
     h.addEventListener('dragstart', e => {
-      e.dataTransfer.setData('text/plain', JSON.stringify({ id: h.dataset.rec, src: h.dataset.src }));
+      e.dataTransfer.setData('text/plain', JSON.stringify({
+        rec: h.dataset.rec || null, inst: h.dataset.inst || null, src: h.dataset.src,
+      }));
       e.dataTransfer.effectAllowed = 'move';
       h.closest('.pay')?.classList.add('dragging');
     });
@@ -182,12 +186,35 @@ function renderPeriods() {
       card.classList.remove('drop-target');
       let data; try { data = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
       const target = card.dataset.dropPeriod;
-      if (!data?.id || !target || target === data.src) return;
-      const rec = state.records.find(r => r.id === data.id);
-      if (!rec) return;
-      rec.period = target;
-      state.records.sort((a, b) => a.period < b.period ? -1 : 1);
-      await putRecord(db, rec);
+      if (!data?.src || !target || target === data.src) return;
+
+      if (data.inst) {                                   // платёж рассрочки
+        const inst = state.installments.find(i => i.id === data.inst);
+        if (!inst) return;
+        if (data.rec) {                                  // реальная запись → факт-дата, старый слот плана убрать
+          const rec = state.records.find(r => r.id === data.rec);
+          if (!rec) return;
+          rec.period = target;
+          if (inst.plan) inst.plan = inst.plan.filter(it => it.period !== data.src);
+          state.records.sort(byPeriodAsc);
+          await putRecord(db, rec);
+          await putInstallment(db, inst);
+        } else {                                         // виртуальный слот плана → пере-датировать
+          if (!inst.plan) return;
+          if (inst.plan.some(it => it.period === target)) return; // дата уже занята этой рассрочкой
+          const slot = inst.plan.find(it => it.period === data.src);
+          if (!slot) return;
+          slot.period = target;
+          inst.plan.sort(byPeriodAsc);
+          await putInstallment(db, inst);
+        }
+      } else if (data.rec) {                             // разовый платёж
+        const rec = state.records.find(r => r.id === data.rec);
+        if (!rec) return;
+        rec.period = target;
+        state.records.sort(byPeriodAsc);
+        await putRecord(db, rec);
+      }
       render();
     });
   });
@@ -255,9 +282,12 @@ function paymentRow(period, p) {
   const progress = p.instProgress
     ? `<span class="inst-tag">${p.instProgress.paidCount}/${p.instProgress.totalCount}</span>` : '';
   const bank = p.bank ? `<span class="bank-tag">${esc(p.bank)}</span>` : '';
-  // разовый платёж (не виртуальный, не регуляр, не рассрочка) можно перетащить в другой период
-  const movable = !p.virtual && !p.regularId && !p.installmentId;
-  const drag = movable ? `draggable="true" data-rec="${p.id}" data-src="${period}"` : '';
+  // перетаскивать между периодами можно: разовый реальный платёж и ЛЮБОЙ платёж рассрочки
+  // (регулярные — нет, они повторяются). data-rec — для реальной записи, data-inst — для рассрочки.
+  const movable = (!p.virtual && !p.regularId && !p.installmentId) || !!p.installmentId;
+  const drag = movable
+    ? `draggable="true" data-src="${period}"${(p.id && !p.virtual) ? ` data-rec="${p.id}"` : ''}${p.installmentId ? ` data-inst="${p.installmentId}"` : ''}`
+    : '';
   return `
   <div class="pay ${p.paid ? 'paid' : ''} ${movable ? 'movable' : ''}">
     <input type="checkbox" data-pay="${esc(`${period}|${payKey(p)}`)}" ${p.paid ? 'checked' : ''}>

@@ -64,6 +64,7 @@ export function buildTimeline(state, endISO) {
       lastLinkedPeriod: linked.reduce((max, r) => r.period > max ? r.period : max, ''),
       paidCount: linked.filter(r => r.paid).length,
       linkedCount: linked.length,
+      planVirt: 0, // сколько уже выгенерено виртуалок из плана (для капа по остатку)
     });
   }
 
@@ -111,8 +112,14 @@ export function buildTimeline(state, endISO) {
         if (hasRec) continue; // запись этого периода уже отрисована (или обнулена)
         const item = inst.plan.find(it => it.period === p);
         if (!item || !item.amount) continue;
+        // не проектируем платежи дальше реального остатка: если долг уже покрыт
+        // записями (досрочно закрыли) — будущие слоты плана не «фоним».
+        const room = inst.total - st.scheduled - st.planVirt;
+        if (room <= 0) continue;
+        const amount = Math.min(item.amount, room);
+        st.planVirt += amount;
         payments.push({
-          id: `virt-${inst.id}-${p}`, name: inst.name, amount: item.amount,
+          id: `virt-${inst.id}-${p}`, name: inst.name, amount,
           bank: inst.bank, paid: false, virtual: true, installmentId: inst.id,
         });
         continue;
