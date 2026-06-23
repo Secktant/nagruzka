@@ -390,28 +390,36 @@ function openPaymentForm(period, key) {
 
   // разовый платёж (можно делать отрицательным = «мне должны»)
   const isOneOff = isNew || (!p?.regularId && !p?.installmentId);
-  // перенос на другую дату — только для обычного разового платежа
+  const isInst = !!p?.installmentId;
+  const instObj = isInst ? state.installments.find(i => i.id === p.installmentId) : null;
+  // для виртуального платежа рассрочки берём сумму из СЛОТА плана (а не из p.amount,
+  // которая может быть «капнута» остатком при досрочном погашении)
+  const planSlot = (isVirtual && instObj?.plan) ? instObj.plan.find(it => it.period === period) : null;
+  const amountDefault = planSlot ? planSlot.amount : (p ? p.amount : '');
+  // перенос на другую дату — обычный разовый платёж (для submit-ветки)
   const canMove = !isNew && !isVirtual && !p.installmentId && !p.regularId;
-  const movePeriods = canMove ? generatePeriods(state.settings.startPeriod, horizonEnd()) : [];
-  if (canMove && !movePeriods.includes(period)) { movePeriods.push(period); movePeriods.sort(); }
+  // поле «Дата» показываем для разового И для рассрочки (не для регулярного и не для нового)
+  const showDate = !isNew && !p.regularId;
+  const movePeriods = showDate ? generatePeriods(state.settings.startPeriod, horizonEnd()) : [];
+  if (showDate && !movePeriods.includes(period)) { movePeriods.push(period); movePeriods.sort(); }
 
   openModal(`
   <form id="pay-form" class="form">
     <h3>${isNew ? 'Новый платёж' : 'Платёж'} · ${fmtPeriodFull(period)}</h3>
-    ${isVirtual ? `<p class="hint">Это ${p.installmentId ? 'платёж по рассрочке' : 'регулярный платёж'} —
-      правка коснётся только этого периода.</p>` : ''}
+    ${isVirtual && !isInst ? `<p class="hint">Это регулярный платёж — правка коснётся только этого периода.</p>` : ''}
+    ${isInst ? `<p class="hint">Платёж по рассрочке. Дату можно поменять (например, оплатил раньше срока).</p>` : ''}
     <label>Название
       <input name="name" required autocomplete="off" list="name-suggest"
         value="${esc(p?.name || '')}" ${p?.installmentId ? 'readonly' : ''}>
       <datalist id="name-suggest">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
     </label>
     <label>Сумма, ₽
-      ${moneyInput('amount', p ? p.amount : '', 'placeholder="5 000" required')}
+      ${moneyInput('amount', amountDefault, 'placeholder="5 000" required')}
     </label>
     ${isOneOff ? `<p class="hint" id="owe-hint" hidden>Минус — это деньги, которые <b>должны вам</b> (вернётся): уменьшит нагрузку периода.</p>` : ''}
     <div class="lbl-like">Банк</div>
     ${bankChipsHTML(p?.bank || null)}
-    ${canMove ? `<label style="margin-top:12px">Дата
+    ${showDate ? `<label style="margin-top:12px">Дата
       <select name="period">${movePeriods.map(pp => `<option value="${pp}" ${pp === period ? 'selected' : ''}>${fmtPeriodFull(pp)}</option>`).join('')}</select>
     </label>` : ''}
     <div class="form-actions">
@@ -481,6 +489,30 @@ function openPaymentForm(period, key) {
       state.records.push(rec);
       state.records.sort((a, b) => a.period < b.period ? -1 : 1);
       await putRecord(db, rec);
+    } else if (isInst) {
+      // платёж рассрочки: дата меняет либо слот плана (виртуальный), либо период записи (реальный)
+      const inst = state.installments.find(i => i.id === p.installmentId);
+      const newPeriod = (showDate && f.get('period')) || period;
+      if (isVirtual) {
+        if (inst?.plan) {
+          if (newPeriod !== period && inst.plan.some(it => it.period === newPeriod)) {
+            alert('У рассрочки уже есть платёж на эту дату.'); return;
+          }
+          const slot = inst.plan.find(it => it.period === period);
+          if (slot) { slot.period = newPeriod; slot.amount = amount; inst.plan.sort((a, b) => a.period < b.period ? -1 : 1); }
+          await putInstallment(db, inst);
+        }
+      } else {
+        const rec = state.records.find(r => r.id === p.id);
+        rec.amount = amount; rec.bank = bank;
+        if (newPeriod !== rec.period) {                 // переезд на факт-дату, старый слот плана убрать
+          if (inst?.plan) inst.plan = inst.plan.filter(it => it.period !== rec.period);
+          rec.period = newPeriod;
+          state.records.sort((a, b) => a.period < b.period ? -1 : 1);
+          if (inst) await putInstallment(db, inst);
+        }
+        await putRecord(db, rec);
+      }
     } else if (isVirtual) {
       await materialize(period, p, { name, amount, bank });
     } else {
