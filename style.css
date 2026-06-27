@@ -153,6 +153,20 @@ body {
 
 .payments { border-top: 1px solid var(--border); }
 
+/* В режиме прогноза все карточки одной высоты: список платежей заполняет
+   свободное место и скроллится при переполнении (≈7 строк помещается),
+   меньше платежей — пустота, чипы банков прижаты к низу карточки. */
+.shell.forecast-mode .card {
+  display: flex;
+  flex-direction: column;
+  height: 520px;
+}
+.shell.forecast-mode .payments {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
 .pay {
   display: flex;
   align-items: center;
