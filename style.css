@@ -155,16 +155,19 @@ body {
 
 /* В режиме прогноза все карточки одной высоты: список платежей заполняет
    свободное место и скроллится при переполнении (≈7 строк помещается),
-   меньше платежей — пустота, чипы банков прижаты к низу карточки. */
-.shell.forecast-mode .card {
+   меньше платежей — пустота, чипы банков прижаты к низу карточки.
+   Скоуп строго на Периоды — иначе forecast-mode (он остаётся на .shell при
+   переходе во вкладки) ломал бы карточки Долгов/Настроек. */
+.shell.forecast-mode #view-periods .card {
   display: flex;
   flex-direction: column;
   height: 520px;
 }
-.shell.forecast-mode .payments {
+.shell.forecast-mode #view-periods .payments {
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
+  overflow-x: hidden;   /* overflow-y:auto делает overflow-x вычисляемым в auto → ложная горизонт. полоса */
 }
 
 .pay {
@@ -593,4 +596,15 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   .shell:has(#view-periods:not([hidden])) { max-width: 1120px; }
   /* режим прогноза (лента года) — широко, колонок «сколько влезет». */
   .shell.forecast-mode:has(#view-periods:not([hidden])) { max-width: 1760px; }
+
+  /* Одиночный месяц @150% (широкий экран, НЕ прогноз): в месяце ровно 2 карточки =
+     один ряд грида, растягиваем их до равной высоты (по более высокой). Список
+     платежей — до 10 строк, дальше скролл внутри карточки. Высоту НЕ фиксируем:
+     карточки по содержимому (нет лишней пустоты и прокрутки страницы на коротких). */
+  .shell:not(.forecast-mode) #periods { align-items: stretch; }
+  .shell:not(.forecast-mode) #view-periods .payments {
+    max-height: calc(10 * 40px);   /* не больше 10 строк */
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
 }
