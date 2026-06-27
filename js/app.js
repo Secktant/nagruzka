@@ -13,7 +13,7 @@ import {
   buildTimeline, installmentSummaries, generatePeriods, monthlyLoads, yearlyLoads,
   fmtMoney, groupThousands, fmtPeriod, fmtMonth, loadZone,
 } from './engine.js';
-import { generateKeyfile, encryptText, decryptToText, inspect } from './crypto.js';
+import { generateKeyfile, encryptText, encryptTextWithKey, decryptToText, inspect } from './crypto.js';
 import { SyncEngine, isConfigured as syncConfigured, generateSyncId, isValidSyncId } from './sync.js';
 
 // Обёртки над записью в БД: после любого сохранения помечаем «грязным» для синка.
@@ -1422,6 +1422,7 @@ async function renderSettings() {
         <button class="btn" id="enc-import-btn">🔓 Загрузить зашифрованную</button>
         <input type="file" id="enc-import-file" hidden>
       </div>
+      <p class="hint">Один пароль на всё: файл открывается тем же паролем, что синхронизация (+ keyfile). Отдельный пароль для файла задавать не нужно.</p>
     </section>
 
     ${syncConfigured() ? `
@@ -1550,12 +1551,20 @@ async function renderSettings() {
 
   // --- зашифрованная копия ---
   $('#enc-export-btn').onclick = async () => {
-    const pass = prompt('Пароль для шифрования (запишите его — без него файл не открыть):');
-    if (!pass) return;
-    const again = prompt('Повторите пароль:');
-    if (pass !== again) { alert('Пароли не совпали.'); return; }
     try {
-      const bytes = await encryptText(exportState(state), pass, kf);
+      let bytes;
+      if (syncEngine?.key && syncEngine?.salt) {
+        // один пароль: файл шифруется ключом синхронизации (keyfile для синка обязателен),
+        // открывается тем же паролем приложения — отдельный пароль для файла не нужен.
+        bytes = await encryptTextWithKey(exportState(state), syncEngine.key, syncEngine.salt, !!kf);
+      } else {
+        // синхронизация не настроена — задаём пароль для файла вручную
+        const pass = prompt('Пароль для шифрования (запиши — без него файл не открыть):');
+        if (!pass) return;
+        const again = prompt('Повтори пароль:');
+        if (pass !== again) { alert('Пароли не совпали.'); return; }
+        bytes = await encryptText(exportState(state), pass, kf);
+      }
       downloadBytes(bytes, `nagruzka-${todayISO()}.nz`);
       alert('Зашифрованная копия сохранена ✓' + (kf ? '\n(с keyfile)' : '\n(без keyfile — только пароль)'));
     } catch (err) {
@@ -1574,7 +1583,7 @@ async function renderSettings() {
         alert('Этот файл зашифрован с keyfile, а на устройстве его нет. Сначала загрузите keyfile.');
         return;
       }
-      const pass = prompt('Пароль от зашифрованной копии:');
+      const pass = prompt('Пароль от копии (обычно — пароль синхронизации):');
       if (!pass) return;
       const json = await decryptToText(bytes, pass, meta.needsKeyfile ? kf : null);
       // что внутри — показываем перед заменой

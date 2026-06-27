@@ -43,22 +43,34 @@ async function deriveAesKey(password, keyfileBytes, salt) {
   return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
 
-// plaintext: строка (JSON). Возвращает Uint8Array — содержимое файла.
-export async function encryptText(plaintext, password, keyfileBytes) {
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await deriveAesKey(password, keyfileBytes, salt);
-  const ct = new Uint8Array(
-    await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, te.encode(plaintext))
-  );
-  const flags = keyfileBytes ? FLAG_KEYFILE : 0;
+// Упаковка в файловый формат NZENC1 (общая для обоих путей шифрования).
+function packNz(salt, iv, ct, usedKeyfile) {
   const out = new Uint8Array(6 + 1 + 16 + 12 + ct.length);
   out.set(MAGIC, 0);
-  out[6] = flags;
+  out[6] = usedKeyfile ? FLAG_KEYFILE : 0;
   out.set(salt, 7);
   out.set(iv, 23);
   out.set(ct, 35);
   return out;
+}
+
+// plaintext: строка (JSON). Возвращает Uint8Array — содержимое файла.
+export async function encryptText(plaintext, password, keyfileBytes) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const key = await deriveAesKey(password, keyfileBytes, salt);
+  return encryptTextWithKey(plaintext, key, salt, !!keyfileBytes);
+}
+
+// Зашифровать ГОТОВЫМ ключом и заданной солью (16 байт) — чтобы у файла не было
+// СВОЕГО пароля: напр. сессионным ключом синхронизации. Файл самодостаточен (соль
+// зашита внутрь) и открывается тем же паролем приложения через decryptToText.
+export async function encryptTextWithKey(plaintext, key, salt, usedKeyfile) {
+  if (!salt || salt.length !== 16) throw new Error('Соль должна быть 16 байт');
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(
+    await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, te.encode(plaintext))
+  );
+  return packNz(salt, iv, ct, usedKeyfile);
 }
 
 // Разбирает заголовок без расшифровки: нужен ли keyfile.
