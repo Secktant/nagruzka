@@ -1,8 +1,16 @@
 // IndexedDB-хранилище. Стора: kv (настройки), regulars, installments, records.
+// Этап 4b: при настроенном ключе данные лежат не плейнтекстом, а одним зашифрованным
+// снимком в kv 'vault' (см. saveVault/loadVault), плейнтекст-стора пусты.
+
+import { sealGCM, openGCM } from './crypto.js';
 
 const DB_NAME = 'nagruzka';
 const DB_VERSION = 1;
 const STORES = ['regulars', 'installments', 'records'];
+const VAULT_AAD = 'nz:vault';
+
+const sortRecords = (records) =>
+  records.slice().sort((a, b) => a.period < b.period ? -1 : a.period > b.period ? 1 : 0);
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -45,7 +53,9 @@ function getKV(db, key) {
 export async function initStore(seed) {
   const db = await openDB();
   const settings = await getKV(db, 'settings');
-  if (!settings) await writeAll(db, seed);
+  const vaultActive = await getKV(db, 'vaultActive');
+  // не сеять поверх зашифрованного сейфа (плейнтекст-настройки удалены при миграции)
+  if (!settings && !vaultActive) await writeAll(db, seed);
   return db;
 }
 
@@ -66,9 +76,41 @@ export async function loadState(db) {
     getAll(db, 'installments'),
     getAll(db, 'records'),
   ]);
-  records.sort((a, b) => a.period < b.period ? -1 : a.period > b.period ? 1 : 0);
-  return { settings, regulars, installments, records };
+  return { settings, regulars, installments, records: sortRecords(records) };
 }
+
+// --- Локальное шифрование «на месте» (этап 4b) ---
+// Сейф = весь снимок состояния, зашифрованный ключом синка (AES-GCM + AAD-привязка).
+// Когда сейф активен, плейнтекст-стора пусты, истина — в kv 'vault'.
+export async function saveVault(db, key, state) {
+  const blob = await sealGCM(key, exportState(state), VAULT_AAD);
+  await tx(db, 'kv', 'readwrite', s => s.put(blob, 'vault'));
+}
+export async function loadVault(db, key) {
+  const blob = await getKV(db, 'vault');
+  if (!blob) return null;
+  const d = JSON.parse(await openGCM(key, blob, VAULT_AAD)); // бросит при неверном ключе
+  return {
+    settings: d.settings,
+    regulars: d.regulars || [],
+    installments: d.installments || [],
+    records: sortRecords(d.records || []),
+  };
+}
+export const hasVault = (db) => getKV(db, 'vault').then(v => !!v);
+
+// Переход на сейф: стираем плейнтекст-данные и ставим маркер (чтобы initStore не сеял).
+export async function clearPlaintextStores(db) {
+  for (const name of STORES) await tx(db, name, 'readwrite', s => s.clear());
+  await tx(db, 'kv', 'readwrite', s => { s.delete('settings'); s.put(true, 'vaultActive'); });
+}
+
+// Сохранение БЕЗ ключа (синк/пароль ещё не настроены) — прежний плейнтекст-путь.
+export const saveLegacy = (db, state) => writeAll(db, state);
+
+// Снять сейф (при отвязке Sync ID): убрать шифроснимок и маркер. Перед вызовом
+// данные обычно возвращают в плейнтекст через saveLegacy.
+export const clearVault = (db) => tx(db, 'kv', 'readwrite', s => { s.delete('vault'); s.delete('vaultActive'); });
 
 export const putRecord = (db, r) => tx(db, 'records', 'readwrite', s => s.put(r));
 export const deleteRecord = (db, id) => tx(db, 'records', 'readwrite', s => s.delete(id));

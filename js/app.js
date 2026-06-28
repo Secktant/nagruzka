@@ -1,10 +1,7 @@
 import { SEED } from './seed.js';
 import {
-  initStore, loadState, exportState, importState,
-  putRecord as _putRecord, deleteRecord as _deleteRecord,
-  putRegular as _putRegular, deleteRegular as _deleteRegular,
-  putInstallment as _putInstallment, deleteInstallment as _deleteInstallment,
-  putSettings as _putSettings,
+  initStore, loadState, exportState,
+  saveVault, loadVault, hasVault, clearPlaintextStores, clearVault, saveLegacy,
   getKeyfile, setKeyfile, clearKeyfile,
   getSyncId, setSyncId, clearSyncId,
   getSyncKey, setSyncKey, clearSyncKey,
@@ -16,18 +13,39 @@ import {
 import { generateKeyfile, encryptText, encryptTextWithKey, decryptToText, inspect } from './crypto.js';
 import { SyncEngine, isConfigured as syncConfigured, generateSyncId, isValidSyncId } from './sync.js';
 
-// Обёртки над записью в БД: после любого сохранения помечаем «грязным» для синка.
+// Персистентность (этап 4b): всё состояние сохраняется одним снимком через persist().
+// Есть ключ (синк настроен) → зашифрованный сейф (kv 'vault'); нет → плейнтекст-стора.
+// После любого сохранения помечаем «грязным» для синка. Все мутаторы — это persist+markDirty,
+// т.к. state в памяти всегда актуален (вызывающий код обновляет его до сохранения).
 const markDirty = () => syncEngine?.notifyLocalChange();
-const putRecord = (...a) => _putRecord(...a).then(r => (markDirty(), r));
-const deleteRecord = (...a) => _deleteRecord(...a).then(r => (markDirty(), r));
-const putRegular = (...a) => _putRegular(...a).then(r => (markDirty(), r));
-const deleteRegular = (...a) => _deleteRegular(...a).then(r => (markDirty(), r));
-const putInstallment = (...a) => _putInstallment(...a).then(r => (markDirty(), r));
-const deleteInstallment = (...a) => _deleteInstallment(...a).then(r => (markDirty(), r));
-const putSettings = (...a) => _putSettings(...a).then(r => (markDirty(), r));
+async function persist() {
+  if (vaultKey) await saveVault(db, vaultKey, state);
+  else await saveLegacy(db, state);
+}
+const saveAll = async () => { await persist(); markDirty(); };
+const putRecord = saveAll, deleteRecord = saveAll;
+const putRegular = saveAll, deleteRegular = saveAll;
+const putInstallment = saveAll, deleteInstallment = saveAll;
+const putSettings = saveAll;
+
+// Принять снимок из JSON (импорт файла / приём с сервера): заменить состояние и сохранить.
+async function adoptStateJSON(json) {
+  const d = JSON.parse(json);
+  if (d.app !== 'nagruzka' || !d.settings || !Array.isArray(d.records)) {
+    throw new Error('Это не похоже на резервную копию «Нагрузки»');
+  }
+  state = {
+    settings: d.settings,
+    regulars: d.regulars || [],
+    installments: d.installments || [],
+    records: (d.records || []).slice().sort((a, b) => a.period < b.period ? -1 : a.period > b.period ? 1 : 0),
+  };
+  await persist();
+}
 
 let db, state, timeline;
 let syncEngine = null;       // движок синка (null пока не настроен)
+let vaultKey = null;         // ключ локального шифрования (= ключ синка), null пока не настроен
 let currentKeyfile = null;   // кэш keyfile в памяти (для движка, который читает синхронно)
 let syncStatus = 'off';      // off | locked | syncing | synced | offline | conflict | error
 const TODAY = new Date();
@@ -1500,8 +1518,7 @@ async function renderSettings() {
     if (!file) return;
     if (!confirm('Импорт ЗАМЕНИТ все текущие данные содержимым файла. Продолжить?')) return;
     try {
-      await importState(db, await file.text());
-      state = await loadState(db);
+      await adoptStateJSON(await file.text());
       render();
       markDirty(); // если синк включён — выгрузить импортированные данные на сервер
       alert('Импорт выполнен ✓');
@@ -1596,8 +1613,7 @@ async function renderSettings() {
       );
       if (!ok) return;
       downloadBytes(exportState(state), `nagruzka-before-import-${todayISO()}.json`, 'application/json');
-      await importState(db, json);
-      state = await loadState(db);
+      await adoptStateJSON(json);
       render();
       markDirty(); // если синк включён — выгрузить импортированные данные на сервер
       alert('Импорт выполнен ✓');
@@ -1625,7 +1641,8 @@ async function renderSettings() {
       const txt = (prompt('Вставь Sync ID со второго устройства:') || '').trim();
       if (!txt) return;
       if (!isValidSyncId(txt)) { alert('Это не похоже на Sync ID «Нагрузки».'); return; }
-      // смена Sync ID = другая ячейка: сбрасываем сохранённый ключ синка
+      // смена Sync ID = другая ячейка: возвращаем данные в плейнтекст, сбрасываем ключ/сейф
+      if (vaultKey) { await saveLegacy(db, state); await clearVault(db); vaultKey = null; }
       if (syncEngine) { syncEngine.stop(); syncEngine.key = null; }
       syncStatus = 'off';
       await clearSyncKey(db);
@@ -1635,6 +1652,7 @@ async function renderSettings() {
     };
     if ($('#sid-clear')) $('#sid-clear').onclick = async () => {
       if (!confirm('Удалить Sync ID с этого устройства? Синхронизация здесь отключится.')) return;
+      if (vaultKey) { await saveLegacy(db, state); await clearVault(db); vaultKey = null; } // вернуть в плейнтекст
       if (syncEngine) { syncEngine.stop(); syncEngine.key = null; }
       syncStatus = 'off';
       await clearSyncId(db);
@@ -1649,6 +1667,11 @@ async function renderSettings() {
         syncStatus = 'syncing'; updateSyncStatusUI();
         await syncEngine.unlock(sid, pass);   // деривация ключа + первая сверка с сервером
         await setSyncKey(db, { key: syncEngine.key, salt: syncEngine.salt }); // запомнить на устройстве
+        vaultKey = syncEngine.key;             // включаем локальное шифрование тем же ключом
+        if (!(await hasVault(db))) {            // первая настройка → перенести плейнтекст в сейф
+          await saveVault(db, vaultKey, state);
+          await clearPlaintextStores(db);
+        }
         syncEngine.start();                    // фоновый опрос
         render();
       } catch (err) {
@@ -1658,10 +1681,8 @@ async function renderSettings() {
       }
     };
     if ($('#sync-off')) $('#sync-off').onclick = async () => {
-      syncEngine.stop();
-      syncEngine.key = null;
-      syncStatus = 'off';
-      await clearSyncKey(db);   // забыть ключ — при следующем включении спросит пароль
+      syncEngine.stop();        // только остановить обмен; ключ и сейф оставляем —
+      syncStatus = 'off';       // локальные данные должны читаться без пароля (замок — Шаг 5)
       render();
     };
     if ($('#sync-pass')) $('#sync-pass').onclick = async () => {
@@ -1673,6 +1694,8 @@ async function renderSettings() {
       try {
         await syncEngine.changePassword(p1);                               // перешифровать + выложить
         await setSyncKey(db, { key: syncEngine.key, salt: syncEngine.salt }); // запомнить новый ключ
+        vaultKey = syncEngine.key;                                          // и пересохранить сейф новым ключом
+        if (await hasVault(db)) await saveVault(db, vaultKey, state);
         alert('Пароль синхронизации изменён ✓\n\nНа ДРУГИХ устройствах синк покажет «не удалось расшифровать» — там нажми «Выключить» и снова «Включить» уже с новым паролем.');
         render();
       } catch (err) {
@@ -1787,8 +1810,7 @@ function createSyncEngine() {
   return new SyncEngine({
     getStateJSON: () => exportState(state),
     applyStateJSON: async (json) => {
-      await importState(db, json);        // пишет напрямую, не через обёртки — без эха
-      state = await loadState(db);
+      await adoptStateJSON(json);          // заменить состояние и сохранить (сейф/плейнтекст), без эха
       render();
     },
     getKeyfile: () => currentKeyfile || null,
@@ -1823,13 +1845,24 @@ function updateConnBanner(s) {
 
 async function main() {
   db = await initStore(SEED);
-  state = await loadState(db);
   currentKeyfile = await getKeyfile(db);
+  const saved = await getSyncKey(db);
+  // Этап 4b: есть ключ → данные в зашифрованном сейфе; иначе плейнтекст.
+  if (saved?.key && await hasVault(db)) {
+    vaultKey = saved.key;
+    state = await loadVault(db, vaultKey);
+  } else {
+    state = await loadState(db);              // плейнтекст (или seed)
+    if (saved?.key) {                          // ключ есть, сейфа ещё нет → миграция плейнтекст→сейф
+      vaultKey = saved.key;
+      await saveVault(db, vaultKey, state);
+      if (await loadVault(db, vaultKey)) await clearPlaintextStores(db); // чистим ТОЛЬКО после успешного чтения
+    }
+  }
   if (syncConfigured()) {
     syncEngine = createSyncEngine();
     // «Запомнить на устройстве»: если ключ сохранён — поднимаем синк без ввода пароля.
     const sid = await getSyncId(db);
-    const saved = await getSyncKey(db);
     if (sid && saved?.key) {
       await syncEngine.prepare(sid);   // вычислить id чанка/меты из Sync ID
       syncEngine.key = saved.key;
