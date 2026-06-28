@@ -1831,7 +1831,7 @@ async function main() {
     const sid = await getSyncId(db);
     const saved = await getSyncKey(db);
     if (sid && saved?.key) {
-      syncEngine.id = sid;
+      await syncEngine.prepare(sid);   // вычислить id чанка/меты из Sync ID
       syncEngine.key = saved.key;
       syncEngine.salt = saved.salt;
       syncEngine.version = 0;      // подтянем актуальную версию из сервера ниже
