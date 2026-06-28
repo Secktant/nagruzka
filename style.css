@@ -623,3 +623,4 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .lock-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
 .lock-box .btn { width: 100%; justify-content: center; }
 .lock-err { color: var(--red); font-size: 13px; min-height: 18px; }
+.lock-status { color: var(--muted); font-size: 14px; min-height: 18px; }

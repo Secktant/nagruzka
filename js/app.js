@@ -1906,7 +1906,9 @@ function updateConnBanner(s) {
 }
 
 // Экран-замок (Шаг 5): блокирует приложение, пока K не получен биометрией или паролём.
-// Возвращает CryptoKey. Биометрия — по жесту (кнопка), пароль — фолбэк/без PRF.
+// Сначала АВТО-попытка Face/Touch ID; после MAX неудач открывается вход по паролю.
+// Без зарегистрированной биометрии (замок только с паролём) — пароль сразу.
+const LOCK_MAX_BIO = 5;
 function runLockGate(lock) {
   return new Promise((resolve) => {
     const ov = document.createElement('div');
@@ -1915,37 +1917,56 @@ function runLockGate(lock) {
       <div class="lock-box">
         <div class="lock-logo">🔒</div>
         <div class="lock-title">Нагрузка</div>
-        ${lock.bio ? `<button class="btn primary" id="lock-bio">Разблокировать · Face / Touch ID</button>` : ''}
-        <button class="btn" id="lock-pass">Войти по паролю</button>
+        <div class="lock-status" id="lock-status"></div>
+        <button class="btn primary" id="lock-bio" hidden>Повторить · Face / Touch ID</button>
+        <button class="btn" id="lock-pass" hidden>Войти по паролю</button>
         <div class="lock-err" id="lock-err"></div>
       </div>`;
     document.body.appendChild(ov);
+    const statusEl = ov.querySelector('#lock-status');
     const errEl = ov.querySelector('#lock-err');
+    const bioBtn = ov.querySelector('#lock-bio');
+    const passBtn = ov.querySelector('#lock-pass');
+    const setStatus = (m) => { statusEl.textContent = m || ''; };
     const setErr = (m) => { errEl.textContent = m || ''; };
     const done = (key) => { ov.remove(); resolve(key); };
+    const revealPassword = () => { bioBtn.hidden = true; passBtn.hidden = false; };
 
-    const bioBtn = ov.querySelector('#lock-bio');
-    if (bioBtn) bioBtn.onclick = async () => {
-      setErr('');
+    let attempts = 0;
+    const tryBio = async () => {
+      bioBtn.hidden = true;
+      setErr(''); setStatus('Разблокировка по Face / Touch ID…');
       try {
-        const rawK = await unlockBiometric(lock.bio);
-        done(await importAesKey(rawK));
+        done(await importAesKey(await unlockBiometric(lock.bio)));
       } catch (e) {
-        setErr('Биометрия не сработала — войди по паролю.');
+        attempts++;
+        setStatus('');
+        if (attempts >= LOCK_MAX_BIO) {
+          setErr(`Не удалось ${LOCK_MAX_BIO} раз — войди по паролю.`);
+          revealPassword();
+        } else {
+          setErr(`Не вышло (${attempts}/${LOCK_MAX_BIO}). Повтори.`);
+          bioBtn.hidden = false;
+        }
       }
     };
-    ov.querySelector('#lock-pass').onclick = async () => {
+    bioBtn.onclick = tryBio;
+
+    passBtn.onclick = async () => {
       const pass = prompt('Пароль (тот же, что синхронизация):');
       if (!pass) return;
-      setErr('Проверяю…');
+      setErr(''); setStatus('Проверяю…');
       try {
         const key = await importAesKey(await deriveKeyRaw(pass, currentKeyfile, lock.salt));
         if (await hasVault(db)) await loadVault(db, key); // бросит при неверном пароле/keyfile
         done(key);
       } catch (e) {
-        setErr('Неверный пароль или keyfile.');
+        setStatus(''); setErr('Неверный пароль или keyfile.');
       }
     };
+
+    if (lock.bio) tryBio();      // авто-попытка биометрии при появлении замка
+    else revealPassword();        // биометрии нет — сразу пароль
   });
 }
 
