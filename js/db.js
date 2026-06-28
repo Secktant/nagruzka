@@ -112,6 +112,12 @@ export const saveLegacy = (db, state) => writeAll(db, state);
 // данные обычно возвращают в плейнтекст через saveLegacy.
 export const clearVault = (db) => tx(db, 'kv', 'readwrite', s => { s.delete('vault'); s.delete('vaultActive'); });
 
+// Замок приложения (этап 5): { salt: Uint8Array, bio?: {credentialId, wrapped} }.
+// Наличие записи = замок включён → на старте гейт (биометрия/пароль). В экспорт не идёт.
+export const getLock = (db) => getKV(db, 'lock');
+export const setLock = (db, obj) => tx(db, 'kv', 'readwrite', s => s.put(obj, 'lock'));
+export const clearLock = (db) => tx(db, 'kv', 'readwrite', s => s.delete('lock'));
+
 export const putRecord = (db, r) => tx(db, 'records', 'readwrite', s => s.put(r));
 export const deleteRecord = (db, id) => tx(db, 'records', 'readwrite', s => s.delete(id));
 export const putRegular = (db, r) => tx(db, 'regulars', 'readwrite', s => s.put(r));

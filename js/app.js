@@ -5,13 +5,15 @@ import {
   getKeyfile, setKeyfile, clearKeyfile,
   getSyncId, setSyncId, clearSyncId,
   getSyncKey, setSyncKey, clearSyncKey,
+  getLock, setLock, clearLock,
 } from './db.js';
 import {
   buildTimeline, installmentSummaries, generatePeriods, monthlyLoads, yearlyLoads,
   fmtMoney, groupThousands, fmtPeriod, fmtMonth, loadZone,
 } from './engine.js';
-import { generateKeyfile, encryptText, encryptTextWithKey, decryptToText, inspect } from './crypto.js';
+import { generateKeyfile, encryptText, encryptTextWithKey, decryptToText, inspect, deriveKeyRaw, importAesKey } from './crypto.js';
 import { SyncEngine, isConfigured as syncConfigured, generateSyncId, isValidSyncId, deriveChunkId, CHUNK_NAGRUZKA } from './sync.js';
+import { webauthnSupported, registerBiometric, unlockBiometric } from './lock.js';
 
 // Персистентность (этап 4b): всё состояние сохраняется одним снимком через persist().
 // Есть ключ (синк настроен) → зашифрованный сейф (kv 'vault'); нет → плейнтекст-стора.
@@ -46,6 +48,7 @@ async function adoptStateJSON(json) {
 let db, state, timeline;
 let syncEngine = null;       // движок синка (null пока не настроен)
 let vaultKey = null;         // ключ локального шифрования (= ключ синка), null пока не настроен
+let vaultSalt = null;        // соль этого ключа (Uint8Array) — для синка и .nz
 let currentKeyfile = null;   // кэш keyfile в памяти (для движка, который читает синхронно)
 let syncStatus = 'off';      // off | locked | syncing | synced | offline | conflict | error
 const TODAY = new Date();
@@ -1374,6 +1377,23 @@ async function renderSettings() {
   const kf = await getKeyfile(db); // Uint8Array | undefined
   const sid = await getSyncId(db); // base64url-строка | undefined
 
+  // Замок (Шаг 5): включается, когда есть мастер-ключ (vaultKey); использует тот же ключ.
+  const lock = await getLock(db);
+  const lockCard = (vaultKey || lock) ? `
+    <section class="card">
+      <h3>Замок · Face / Touch ID</h3>
+      ${lock
+        ? `<div class="keyfile-status">Включён${lock.bio ? ' · вход по Face/Touch ID' : ' · только пароль'}. При открытии приложение спрашивает ${lock.bio ? 'Face/Touch ID (или пароль).' : 'пароль.'}</div>
+           <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
+             <button class="btn danger" id="lock-disable">Выключить замок</button>
+           </div>`
+        : `<div class="keyfile-status off">Выключен — данные шифруются, но открытие без пароля.</div>
+           <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
+             <button class="btn primary" id="lock-enable" ${vaultKey ? '' : 'disabled'}>Включить замок (Face/Touch ID)</button>
+           </div>
+           ${vaultKey ? '<p class="hint">Один раз подтвердишь пароль → дальше вход по Face/Touch ID (пароль — запасной).</p>' : '<p class="hint">Сначала включи синхронизацию — замок использует тот же ключ.</p>'}`}
+    </section>` : '';
+
   $('#view-settings').innerHTML = `
     <div class="section-head"><h2>Настройки</h2></div>
 
@@ -1471,7 +1491,8 @@ async function renderSettings() {
         ${!sid ? 'Создай Sync ID на одном устройстве, «Скопировать» → на втором «Вставить» тот же. ' : ''}
         ${!kf ? '<b>Нужен keyfile</b> (выше) — без него синк не расшифровать.' : ''}
       </p>` : ''}
-    </section>` : ''}`;
+    </section>` : ''}
+    ${lockCard}`;
 
   $('#salary-input').addEventListener('input', async e => {
     const v = parseMoney(e.target.value);
@@ -1484,6 +1505,37 @@ async function renderSettings() {
   $$('#view-settings [data-reg]').forEach(el => {
     el.addEventListener('click', () => openRegularForm(el.dataset.reg));
   });
+
+  // Замок (Шаг 5): включение/выключение. Использует тот же ключ, что синк (vaultKey/vaultSalt).
+  if ($('#lock-enable')) $('#lock-enable').onclick = async () => {
+    const salt = vaultSalt || (await getSyncKey(db))?.salt;
+    if (!vaultKey || !salt) { alert('Сначала включи синхронизацию — замок использует тот же ключ.'); return; }
+    const pass = prompt('Подтверди пароль (тот же, что синхронизация), чтобы включить замок:');
+    if (!pass) return;
+    let rawK;
+    try {
+      rawK = await deriveKeyRaw(pass, currentKeyfile, salt);
+      if (await hasVault(db)) await loadVault(db, await importAesKey(rawK)); // проверка пароля
+    } catch { alert('Пароль или keyfile не подходят.'); return; }
+    let bio = null;
+    if (webauthnSupported()) {
+      try { bio = await registerBiometric(rawK); }
+      catch (e) { if (!confirm('Биометрию включить не вышло (' + (e.message || 'отменено') + ').\nВключить замок только с паролем?')) return; }
+    } else if (!confirm('Это устройство не поддерживает Face/Touch ID для входа. Включить замок только с паролем?')) {
+      return;
+    }
+    await setLock(db, { salt, bio });
+    await clearSyncKey(db); // убрать свободно-используемый кэш → гейт на следующем старте
+    alert('Замок включён ✓ При следующем открытии приложение спросит ' + (bio ? 'Face/Touch ID (или пароль).' : 'пароль.'));
+    render();
+  };
+  if ($('#lock-disable')) $('#lock-disable').onclick = async () => {
+    if (!confirm('Выключить замок? Открытие перестанет спрашивать Face/Touch ID/пароль (данные останутся зашифрованы).')) return;
+    await clearLock(db);
+    if (vaultKey && vaultSalt) await setSyncKey(db, { key: vaultKey, salt: vaultSalt }); // вернуть «запомнить на устройстве»
+    alert('Замок выключен.');
+    render();
+  };
 
   $('#settings-banks').addEventListener('click', async e => {
     if (e.target.id === 'settings-add-bank') {
@@ -1853,30 +1905,83 @@ function updateConnBanner(s) {
   if (s === 'error')   { showToast('bad', '⚠ Не удалось расшифровать — проверь пароль/keyfile', 0); prevConn = 'error'; return; }
 }
 
+// Экран-замок (Шаг 5): блокирует приложение, пока K не получен биометрией или паролём.
+// Возвращает CryptoKey. Биометрия — по жесту (кнопка), пароль — фолбэк/без PRF.
+function runLockGate(lock) {
+  return new Promise((resolve) => {
+    const ov = document.createElement('div');
+    ov.className = 'lock-overlay';
+    ov.innerHTML = `
+      <div class="lock-box">
+        <div class="lock-logo">🔒</div>
+        <div class="lock-title">Нагрузка</div>
+        ${lock.bio ? `<button class="btn primary" id="lock-bio">Разблокировать · Face / Touch ID</button>` : ''}
+        <button class="btn" id="lock-pass">Войти по паролю</button>
+        <div class="lock-err" id="lock-err"></div>
+      </div>`;
+    document.body.appendChild(ov);
+    const errEl = ov.querySelector('#lock-err');
+    const setErr = (m) => { errEl.textContent = m || ''; };
+    const done = (key) => { ov.remove(); resolve(key); };
+
+    const bioBtn = ov.querySelector('#lock-bio');
+    if (bioBtn) bioBtn.onclick = async () => {
+      setErr('');
+      try {
+        const rawK = await unlockBiometric(lock.bio);
+        done(await importAesKey(rawK));
+      } catch (e) {
+        setErr('Биометрия не сработала — войди по паролю.');
+      }
+    };
+    ov.querySelector('#lock-pass').onclick = async () => {
+      const pass = prompt('Пароль (тот же, что синхронизация):');
+      if (!pass) return;
+      setErr('Проверяю…');
+      try {
+        const key = await importAesKey(await deriveKeyRaw(pass, currentKeyfile, lock.salt));
+        if (await hasVault(db)) await loadVault(db, key); // бросит при неверном пароле/keyfile
+        done(key);
+      } catch (e) {
+        setErr('Неверный пароль или keyfile.');
+      }
+    };
+  });
+}
+
 async function main() {
   db = await initStore(SEED);
   currentKeyfile = await getKeyfile(db);
-  const saved = await getSyncKey(db);
-  // Этап 4b: есть ключ → данные в зашифрованном сейфе; иначе плейнтекст.
-  if (saved?.key && await hasVault(db)) {
-    vaultKey = saved.key;
+  const lock = await getLock(db);
+
+  if (lock) {
+    // ЗАМОК (Шаг 5): K открывается биометрией/паролём (overlay блокирует до успеха).
+    vaultKey = await runLockGate(lock);
+    vaultSalt = lock.salt;
+  } else {
+    // Путь 4b: свободно-используемый кэш-ключ «запомнить на устройстве».
+    const saved = await getSyncKey(db);
+    if (saved?.key) { vaultKey = saved.key; vaultSalt = saved.salt; }
+  }
+
+  // Загрузка состояния: есть ключ → зашифрованный сейф; иначе плейнтекст (или seed).
+  if (vaultKey && await hasVault(db)) {
     state = await loadVault(db, vaultKey);
   } else {
-    state = await loadState(db);              // плейнтекст (или seed)
-    if (saved?.key) {                          // ключ есть, сейфа ещё нет → миграция плейнтекст→сейф
-      vaultKey = saved.key;
+    state = await loadState(db);
+    if (vaultKey && !lock) {                    // 4b-миграция плейнтекст→сейф (вне замка-гейта)
       await saveVault(db, vaultKey, state);
-      if (await loadVault(db, vaultKey)) await clearPlaintextStores(db); // чистим ТОЛЬКО после успешного чтения
+      if (await loadVault(db, vaultKey)) await clearPlaintextStores(db); // чистим только после успешного чтения
     }
   }
+
   if (syncConfigured()) {
     syncEngine = createSyncEngine();
-    // «Запомнить на устройстве»: если ключ сохранён — поднимаем синк без ввода пароля.
     const sid = await getSyncId(db);
-    if (sid && saved?.key) {
+    if (sid && vaultKey) {
       await syncEngine.prepare(sid);   // вычислить id чанка/меты из Sync ID
-      syncEngine.key = saved.key;
-      syncEngine.salt = saved.salt;
+      syncEngine.key = vaultKey;
+      syncEngine.salt = vaultSalt;
       syncEngine.version = 0;      // подтянем актуальную версию из сервера ниже
       syncStatus = 'synced';
       syncEngine.start();

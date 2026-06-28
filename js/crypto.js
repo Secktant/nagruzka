@@ -28,7 +28,9 @@ export function generateKeyfile() {
   return crypto.getRandomValues(new Uint8Array(32));
 }
 
-async function deriveAesKey(password, keyfileBytes, salt) {
+// Сырые байты ключа (32) = Argon2id(пароль ⨁ keyfile, salt). Нужны для замка (Шаг 5):
+// биометрия заворачивает именно эти байты, чтобы развернуть их после Face/Touch ID.
+export async function deriveKeyRaw(password, keyfileBytes, salt) {
   const pw = te.encode(password);
   const kf = keyfileBytes || new Uint8Array(0);
   const combined = new Uint8Array(pw.length + kf.length);
@@ -40,7 +42,16 @@ async function deriveAesKey(password, keyfileBytes, salt) {
     memorySize: ARGON.memorySize, hashLength: ARGON.hashLength,
     outputType: 'binary',
   });
+  return new Uint8Array(raw);
+}
+
+// Импорт сырых 32 байт как AES-GCM ключ (неэкспортируемый, для шифрования/расшифровки).
+export function importAesKey(raw) {
   return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+
+async function deriveAesKey(password, keyfileBytes, salt) {
+  return importAesKey(await deriveKeyRaw(password, keyfileBytes, salt));
 }
 
 // Упаковка в файловый формат NZENC1 (общая для обоих путей шифрования).
