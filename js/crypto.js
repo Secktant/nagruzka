@@ -126,18 +126,22 @@ export async function openGCM(key, bytes, aad) {
 }
 
 // bytes: содержимое файла. Возвращает расшифрованную строку (JSON).
-export async function decryptToText(bytes, password, keyfileBytes) {
+// aad (опц., строка) — для бэкапов чанка, чей шифротекст привязан к AAD=id чанка.
+// Ручной экспорт и legacy-бэкап — без AAD (не передавать).
+export async function decryptToText(bytes, password, keyfileBytes, aad) {
   const b = new Uint8Array(bytes);
   inspect(b); // проверка сигнатуры
   const salt = b.slice(7, 23);
   const iv = b.slice(23, 35);
   const ct = b.slice(35);
   const key = await deriveAesKey(password, keyfileBytes, salt);
+  const params = { name: 'AES-GCM', iv };
+  if (aad != null) params.additionalData = te.encode(aad);
   let plain;
   try {
-    plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+    plain = await crypto.subtle.decrypt(params, key, ct);
   } catch {
-    // GCM не сошёлся: неверный пароль, не тот keyfile или битый файл
+    // GCM не сошёлся: неверный пароль, не тот keyfile, не тот AAD или битый файл
     throw new Error('Не удалось расшифровать: неверный пароль/keyfile или файл повреждён');
   }
   return td.decode(plain);

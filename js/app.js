@@ -11,7 +11,7 @@ import {
   fmtMoney, groupThousands, fmtPeriod, fmtMonth, loadZone,
 } from './engine.js';
 import { generateKeyfile, encryptText, encryptTextWithKey, decryptToText, inspect } from './crypto.js';
-import { SyncEngine, isConfigured as syncConfigured, generateSyncId, isValidSyncId } from './sync.js';
+import { SyncEngine, isConfigured as syncConfigured, generateSyncId, isValidSyncId, deriveChunkId, CHUNK_NAGRUZKA } from './sync.js';
 
 // Персистентность (этап 4b): всё состояние сохраняется одним снимком через persist().
 // Есть ключ (синк настроен) → зашифрованный сейф (kv 'vault'); нет → плейнтекст-стора.
@@ -1602,7 +1602,17 @@ async function renderSettings() {
       }
       const pass = prompt('Пароль от копии (обычно — пароль синхронизации):');
       if (!pass) return;
-      const json = await decryptToText(bytes, pass, meta.needsKeyfile ? kf : null);
+      const useKf = meta.needsKeyfile ? kf : null;
+      // Бэкап чанка привязан к AAD=id чанка; ручной экспорт и legacy-бэкап — без AAD.
+      // Пробуем с AAD, при неудаче — без (неверный пароль провалит обе → корректная ошибка).
+      const chunkAad = sid ? await deriveChunkId(sid, CHUNK_NAGRUZKA) : null;
+      let json;
+      try {
+        json = await decryptToText(bytes, pass, useKf, chunkAad);
+      } catch (e1) {
+        if (!chunkAad) throw e1;
+        json = await decryptToText(bytes, pass, useKf); // ретрай без AAD
+      }
       // что внутри — показываем перед заменой
       const data = JSON.parse(json);
       const when = (data.exportedAt || '').slice(0, 10);
