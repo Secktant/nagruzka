@@ -1506,29 +1506,9 @@ async function renderSettings() {
     el.addEventListener('click', () => openRegularForm(el.dataset.reg));
   });
 
-  // Замок (Шаг 5): включение/выключение. Использует тот же ключ, что синк (vaultKey/vaultSalt).
-  if ($('#lock-enable')) $('#lock-enable').onclick = async () => {
-    const salt = vaultSalt || (await getSyncKey(db))?.salt;
-    if (!vaultKey || !salt) { alert('Сначала включи синхронизацию — замок использует тот же ключ.'); return; }
-    const pass = prompt('Подтверди пароль (тот же, что синхронизация), чтобы включить замок:');
-    if (!pass) return;
-    let rawK;
-    try {
-      rawK = await deriveKeyRaw(pass, currentKeyfile, salt);
-      if (await hasVault(db)) await loadVault(db, await importAesKey(rawK)); // проверка пароля
-    } catch { alert('Пароль или keyfile не подходят.'); return; }
-    let bio = null;
-    if (webauthnSupported()) {
-      try { bio = await registerBiometric(rawK); }
-      catch (e) { if (!confirm('Биометрию включить не вышло (' + (e.message || 'отменено') + ').\nВключить замок только с паролем?')) return; }
-    } else if (!confirm('Это устройство не поддерживает Face/Touch ID для входа. Включить замок только с паролем?')) {
-      return;
-    }
-    await setLock(db, { salt, bio });
-    await clearSyncKey(db); // убрать свободно-используемый кэш → гейт на следующем старте
-    alert('Замок включён ✓ При следующем открытии приложение спросит ' + (bio ? 'Face/Touch ID (или пароль).' : 'пароль.'));
-    render();
-  };
+  // Замок (Шаг 5): включение через модалку (пароль в окне + Face ID по отдельной кнопке —
+  // иначе iOS Safari бросает «document is not focused» на create() после нативного prompt).
+  if ($('#lock-enable')) $('#lock-enable').onclick = () => openLockSetup();
   if ($('#lock-disable')) $('#lock-disable').onclick = async () => {
     if (!confirm('Выключить замок? Открытие перестанет спрашивать Face/Touch ID/пароль (данные останутся зашифрованы).')) return;
     await clearLock(db);
@@ -1905,6 +1885,66 @@ function updateConnBanner(s) {
   if (s === 'error')   { showToast('bad', '⚠ Не удалось расшифровать — проверь пароль/keyfile', 0); prevConn = 'error'; return; }
 }
 
+// Включение замка (Шаг 5): двухшаговая модалка. Шаг 1 — пароль в поле окна (не системный
+// prompt) → деривация+проверка ключа (Argon2). Шаг 2 — регистрация биометрии ПРЯМО по нажатию
+// кнопки (create() как первый вызов на свежем жесте при сфокусированном документе — иначе iOS
+// Safari бросает «document is not focused»). rawK держится в замыкании между шагами.
+async function openLockSetup() {
+  const salt = vaultSalt || (await getSyncKey(db))?.salt;
+  if (!vaultKey || !salt) { alert('Сначала включи синхронизацию — замок использует тот же ключ.'); return; }
+  openModal(`
+    <h3>Включить замок</h3>
+    <p class="hint">Подтверди пароль (тот же, что синхронизация).</p>
+    <input type="password" id="lk-pass" class="num" autocomplete="current-password" placeholder="Пароль" style="width:100%">
+    <div class="lock-err" id="lk-err"></div>
+    <div class="form-actions" style="margin-top:10px">
+      <button class="btn" id="lk-cancel">Отмена</button>
+      <button class="btn primary" id="lk-next">Далее</button>
+    </div>`);
+  const err = (m) => { const e = $('#lk-err'); if (e) e.textContent = m || ''; };
+  $('#lk-cancel').onclick = closeModal;
+  $('#lk-next').onclick = async () => {
+    const pass = $('#lk-pass').value;
+    if (!pass) return;
+    err('Проверяю…');
+    let rawK;
+    try {
+      rawK = await deriveKeyRaw(pass, currentKeyfile, salt);
+      if (await hasVault(db)) await loadVault(db, await importAesKey(rawK)); // проверка пароля
+    } catch { err('Неверный пароль или keyfile.'); return; }
+
+    const finish = async (bio) => {
+      await setLock(db, { salt, bio });
+      await clearSyncKey(db); // убрать свободно-используемый кэш → гейт на следующем старте
+      closeModal();
+      alert('Замок включён ✓ При следующем открытии приложение спросит ' + (bio ? 'Face/Touch ID (или пароль).' : 'пароль.'));
+      render();
+    };
+
+    // Шаг 2: выбор способа. Кнопка Face/Touch ID = свежий жест для create().
+    $('#modal-body').innerHTML = `
+      <h3>Замок</h3>
+      <p class="hint">Пароль подтверждён.${webauthnSupported() ? ' Включить вход по Face / Touch ID? Иначе — только пароль.' : ' Устройство не поддерживает Face/Touch ID — замок будет по паролю.'}</p>
+      <div class="lock-err" id="lk-err2"></div>
+      <div class="form-actions" style="margin-top:10px">
+        <button class="btn" id="lk-passonly">Только пароль</button>
+        ${webauthnSupported() ? `<button class="btn primary" id="lk-bio">Включить Face / Touch ID</button>` : ''}
+      </div>`;
+    const err2 = (m) => { const e = $('#lk-err2'); if (e) e.textContent = m || ''; };
+    $('#lk-passonly').onclick = () => finish(null);
+    const bioBtn = $('#lk-bio');
+    if (bioBtn) bioBtn.onclick = async () => {
+      err2('Приложи Face / Touch ID…');
+      try {
+        const bio = await registerBiometric(rawK); // create() первым — фокус+жест на месте
+        await finish(bio);
+      } catch (e) {
+        err2('Не вышло: ' + (e.message || 'отменено') + '. Можно «Только пароль».');
+      }
+    };
+  };
+}
+
 // Экран-замок (Шаг 5): блокирует приложение, пока K не получен биометрией или паролём.
 // Сначала АВТО-попытка Face/Touch ID; после MAX неудач открывается вход по паролю.
 // Без зарегистрированной биометрии (замок только с паролём) — пароль сразу.
@@ -1933,24 +1973,26 @@ function runLockGate(lock) {
     const revealPassword = () => { bioBtn.hidden = true; passBtn.hidden = false; };
 
     let attempts = 0;
-    const tryBio = async () => {
+    // isAuto=true — попытка при появлении замка (без жеста): на iOS падает («not focused»),
+    // поэтому её НЕ считаем за неудачу, просто показываем кнопку. Считаем только по нажатию.
+    const tryBio = async (isAuto) => {
       bioBtn.hidden = true;
       setErr(''); setStatus('Разблокировка по Face / Touch ID…');
       try {
         done(await importAesKey(await unlockBiometric(lock.bio)));
       } catch (e) {
-        attempts++;
         setStatus('');
+        if (!isAuto) attempts++;
         if (attempts >= LOCK_MAX_BIO) {
           setErr(`Не удалось ${LOCK_MAX_BIO} раз — войди по паролю.`);
           revealPassword();
         } else {
-          setErr(`Не вышло (${attempts}/${LOCK_MAX_BIO}). Повтори.`);
+          setErr(isAuto ? 'Нажми, чтобы разблокировать.' : `Не вышло (${attempts}/${LOCK_MAX_BIO}). Повтори.`);
           bioBtn.hidden = false;
         }
       }
     };
-    bioBtn.onclick = tryBio;
+    bioBtn.onclick = () => tryBio(false);
 
     passBtn.onclick = async () => {
       const pass = prompt('Пароль (тот же, что синхронизация):');
@@ -1965,7 +2007,7 @@ function runLockGate(lock) {
       }
     };
 
-    if (lock.bio) tryBio();      // авто-попытка биометрии при появлении замка
+    if (lock.bio) tryBio(true);  // авто-попытка биометрии при появлении замка (без жеста)
     else revealPassword();        // биометрии нет — сразу пароль
   });
 }
