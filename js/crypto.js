@@ -28,7 +28,9 @@ export function generateKeyfile() {
   return crypto.getRandomValues(new Uint8Array(32));
 }
 
-async function deriveAesKey(password, keyfileBytes, salt) {
+// Сырые байты ключа (32) = Argon2id(пароль ⨁ keyfile, salt). Нужны для замка (Шаг 5):
+// биометрия заворачивает именно эти байты, чтобы развернуть их после Face/Touch ID.
+export async function deriveKeyRaw(password, keyfileBytes, salt) {
   const pw = te.encode(password);
   const kf = keyfileBytes || new Uint8Array(0);
   const combined = new Uint8Array(pw.length + kf.length);
@@ -40,25 +42,46 @@ async function deriveAesKey(password, keyfileBytes, salt) {
     memorySize: ARGON.memorySize, hashLength: ARGON.hashLength,
     outputType: 'binary',
   });
+  return new Uint8Array(raw);
+}
+
+// Импорт сырых 32 байт как AES-GCM ключ (неэкспортируемый, для шифрования/расшифровки).
+export function importAesKey(raw) {
   return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
+}
+
+async function deriveAesKey(password, keyfileBytes, salt) {
+  return importAesKey(await deriveKeyRaw(password, keyfileBytes, salt));
+}
+
+// Упаковка в файловый формат NZENC1 (общая для обоих путей шифрования).
+function packNz(salt, iv, ct, usedKeyfile) {
+  const out = new Uint8Array(6 + 1 + 16 + 12 + ct.length);
+  out.set(MAGIC, 0);
+  out[6] = usedKeyfile ? FLAG_KEYFILE : 0;
+  out.set(salt, 7);
+  out.set(iv, 23);
+  out.set(ct, 35);
+  return out;
 }
 
 // plaintext: строка (JSON). Возвращает Uint8Array — содержимое файла.
 export async function encryptText(plaintext, password, keyfileBytes) {
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
   const key = await deriveAesKey(password, keyfileBytes, salt);
+  return encryptTextWithKey(plaintext, key, salt, !!keyfileBytes);
+}
+
+// Зашифровать ГОТОВЫМ ключом и заданной солью (16 байт) — чтобы у файла не было
+// СВОЕГО пароля: напр. сессионным ключом синхронизации. Файл самодостаточен (соль
+// зашита внутрь) и открывается тем же паролем приложения через decryptToText.
+export async function encryptTextWithKey(plaintext, key, salt, usedKeyfile) {
+  if (!salt || salt.length !== 16) throw new Error('Соль должна быть 16 байт');
+  const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = new Uint8Array(
     await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, te.encode(plaintext))
   );
-  const flags = keyfileBytes ? FLAG_KEYFILE : 0;
-  const out = new Uint8Array(6 + 1 + 16 + 12 + ct.length);
-  out.set(MAGIC, 0);
-  out[6] = flags;
-  out.set(salt, 7);
-  out.set(iv, 23);
-  out.set(ct, 35);
-  return out;
+  return packNz(salt, iv, ct, usedKeyfile);
 }
 
 // Разбирает заголовок без расшифровки: нужен ли keyfile.
@@ -83,23 +106,30 @@ export function randomSalt() { return crypto.getRandomValues(new Uint8Array(SYNC
 export const deriveKey = deriveAesKey;
 
 // seal: text -> Uint8Array(iv(12) | ciphertext). Быстро, Argon2 не вызывается.
-export async function sealGCM(key, text) {
+// aad (опц., строка) — привязка к ячейке (id чанка): тот же шифротекст нельзя
+// подставить в другой чанк. Старые блобы писались БЕЗ aad — для них не передаём.
+export async function sealGCM(key, text, aad) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, te.encode(text)));
+  const params = { name: 'AES-GCM', iv };
+  if (aad != null) params.additionalData = te.encode(aad);
+  const ct = new Uint8Array(await crypto.subtle.encrypt(params, key, te.encode(text)));
   const out = new Uint8Array(12 + ct.length);
   out.set(iv, 0);
   out.set(ct, 12);
   return out;
 }
 
-// open: Uint8Array(iv | ciphertext) -> text. Бросает, если ключ не подошёл.
-export async function openGCM(key, bytes) {
+// open: Uint8Array(iv | ciphertext) -> text. Бросает, если ключ/aad не подошли.
+// aad ДОЛЖЕН совпадать с тем, что был при sealGCM (иначе GCM-тег не сойдётся).
+export async function openGCM(key, bytes, aad) {
   const b = new Uint8Array(bytes);
   const iv = b.slice(0, 12);
   const ct = b.slice(12);
+  const params = { name: 'AES-GCM', iv };
+  if (aad != null) params.additionalData = te.encode(aad);
   let plain;
   try {
-    plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+    plain = await crypto.subtle.decrypt(params, key, ct);
   } catch {
     throw new Error('Не удалось расшифровать снимок: неверный пароль/keyfile');
   }
@@ -107,18 +137,22 @@ export async function openGCM(key, bytes) {
 }
 
 // bytes: содержимое файла. Возвращает расшифрованную строку (JSON).
-export async function decryptToText(bytes, password, keyfileBytes) {
+// aad (опц., строка) — для бэкапов чанка, чей шифротекст привязан к AAD=id чанка.
+// Ручной экспорт и legacy-бэкап — без AAD (не передавать).
+export async function decryptToText(bytes, password, keyfileBytes, aad) {
   const b = new Uint8Array(bytes);
   inspect(b); // проверка сигнатуры
   const salt = b.slice(7, 23);
   const iv = b.slice(23, 35);
   const ct = b.slice(35);
   const key = await deriveAesKey(password, keyfileBytes, salt);
+  const params = { name: 'AES-GCM', iv };
+  if (aad != null) params.additionalData = te.encode(aad);
   let plain;
   try {
-    plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+    plain = await crypto.subtle.decrypt(params, key, ct);
   } catch {
-    // GCM не сошёлся: неверный пароль, не тот keyfile или битый файл
+    // GCM не сошёлся: неверный пароль, не тот keyfile, не тот AAD или битый файл
     throw new Error('Не удалось расшифровать: неверный пароль/keyfile или файл повреждён');
   }
   return td.decode(plain);

@@ -25,6 +25,18 @@ export function isValidSyncId(str) {
   try { return b64url.dec(str).length === 32; } catch { return false; }
 }
 
+// --- id чанка (этап 4a): base64url(SHA-256(utf8(SyncID + label))) ---
+// Детерминированный неперечислимый локатор ячейки. Должен считаться БАЙТ-В-БАЙТ так же
+// в бэкап-Action (shell): printf '%s' "${SYNC_ID}${label}" | openssl dgst -sha256 -binary
+//                         | openssl base64 | tr '+/' '-_' | tr -d '='
+const teId = new TextEncoder();
+export const CHUNK_NAGRUZKA = 'nagruzka:main'; // единственный чанк Нагрузки
+export const CHUNK_META = 'meta';              // строка-мета: канонная соль аккаунта
+export async function deriveChunkId(syncId, label) {
+  const digest = await crypto.subtle.digest('SHA-256', teId.encode(syncId + label));
+  return b64url.enc(new Uint8Array(digest));
+}
+
 // --- REST: вызов RPC-функции PostgREST ---
 async function rpc(fn, body) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
@@ -55,6 +67,16 @@ export async function push(id, saltB64, blobB64, baseVersion) {
   return rows[0];
 }
 
+// --- account-мета: одна соль Argon2 на аккаунт (этап 4a) ---
+// sync_meta_get → text|null (соль base64). sync_meta_init → insert-once, возвращает
+// фактически хранимую соль (существующую, если уже была) — так соль фиксируется навсегда.
+export async function metaGet(id) {
+  return rpc('sync_meta_get', { p_id: id });          // скаляр text|null
+}
+export async function metaInit(id, saltB64) {
+  return rpc('sync_meta_init', { p_id: id, p_salt: saltB64 }); // скаляр text
+}
+
 // --- движок: связывает синк с приложением через колбэки (без импорта app.js) ---
 // opts: {
 //   getStateJSON: () => string                 // текущее состояние -> JSON для шифрования
@@ -65,10 +87,12 @@ export async function push(id, saltB64, blobB64, baseVersion) {
 export class SyncEngine {
   constructor(opts) {
     this.opts = opts;
-    this.id = null;
+    this.id = null;           // сырой Sync ID (пользовательский локатор)
+    this.chunkId = null;      // id ячейки данных = SHA-256(SyncID‖"nagruzka:main")
+    this.metaId = null;       // id строки-меты = SHA-256(SyncID‖"meta")
     this.key = null;          // сессионный CryptoKey (в памяти, не хранится)
-    this.salt = null;         // Uint8Array
-    this.version = 0;         // последняя известная версия сервера
+    this.salt = null;         // Uint8Array (канонная соль аккаунта, из меты)
+    this.version = 0;         // последняя известная версия сервера (по чанку)
     this.pollMs = 5000;       // «почти realtime» опрос пока активна вкладка
     this._timer = null;
     this._pushTimer = null;
@@ -76,25 +100,49 @@ export class SyncEngine {
 
   status(s) { this.opts.onStatus?.(s); }
 
+  // Вычислить локаторы (id чанка/меты) из сырого Sync ID. Зовётся в unlock и при
+  // восстановлении сохранённого ключа на старте (app.js), до любых сетевых вызовов.
+  async prepare(syncId) {
+    this.id = syncId;
+    this.chunkId = await deriveChunkId(syncId, CHUNK_NAGRUZKA);
+    this.metaId  = await deriveChunkId(syncId, CHUNK_META);
+  }
+
   // Разблокировка: один раз за сессию вводится пароль, деривируется ключ (Argon2 ~1c).
-  // Если на сервере уже есть снимок — берём его соль и проверяем пароль расшифровкой.
+  // Канонная соль берётся из строки-меты (одна на аккаунт). Если меты ещё нет —
+  // заводим её солью старого single-blob (тогда ключ не меняется) или новой случайной.
+  // Данные читаем из ЧАНКА; если чанка нет, но есть старый single-blob — МИГРИРУЕМ
+  // (расшифровать старый без AAD → записать как чанк с AAD). Старый блоб не трогаем.
   async unlock(id, passphrase) {
-    this.id = id;
-    const remote = await pull(id);
+    await this.prepare(id);
     const kf = this.opts.getKeyfile() || null;
-    if (remote) {
-      this.salt = b64.dec(remote.salt);
-      this.key = await deriveKey(passphrase, kf, this.salt);
-      // проверяем пароль и сразу применяем, если на сервере свежее
-      const json = await openGCM(this.key, b64.dec(remote.blob)); // бросит при неверном пароле
-      this.version = remote.version;
+
+    // 1. канонная соль аккаунта
+    let saltB64 = await metaGet(this.metaId);
+    let legacy = null;
+    if (!saltB64) {
+      legacy = await pull(this.id);                       // старый single-blob (id = сырой Sync ID)
+      const seed = legacy ? legacy.salt : b64.enc(randomSalt());
+      saltB64 = await metaInit(this.metaId, seed);        // insert-once → фактически сохранённая
+    }
+    this.salt = b64.dec(saltB64);
+    this.key = await deriveKey(passphrase, kf, this.salt);
+
+    // 2. данные из чанка / миграция / первый push
+    const chunk = await pull(this.chunkId);
+    if (chunk) {
+      const json = await openGCM(this.key, b64.dec(chunk.blob), this.chunkId); // бросит при неверном пароле
+      this.version = chunk.version;
       await this.opts.applyStateJSON(json);
     } else {
-      // сервер пуст — это первое устройство: новая соль, потом первый push
-      this.salt = randomSalt();
-      this.key = await deriveKey(passphrase, kf, this.salt);
+      if (legacy === null) legacy = await pull(this.id);  // могли не тянуть выше (мета уже была)
       this.version = 0;
-      await this.pushNow();
+      if (legacy) {
+        // соль меты = соль legacy → ключ совпадает; legacy зашифрован БЕЗ AAD
+        const json = await openGCM(this.key, b64.dec(legacy.blob)); // проверка пароля + миграция
+        await this.opts.applyStateJSON(json);
+      }
+      await this.pushNow();                                // создаём чанк (с AAD) из текущего состояния
     }
     this.status('synced');
   }
@@ -104,8 +152,8 @@ export class SyncEngine {
     if (!this.key) return;
     this.status('syncing');
     try {
-      const blob = await sealGCM(this.key, this.opts.getStateJSON());
-      const r = await push(this.id, b64.enc(this.salt), b64.enc(blob), this.version);
+      const blob = await sealGCM(this.key, this.opts.getStateJSON(), this.chunkId);
+      const r = await push(this.chunkId, b64.enc(this.salt), b64.enc(blob), this.version);
       if (r.ok) {
         this.version = r.version;
         this.status('synced');
@@ -125,13 +173,13 @@ export class SyncEngine {
     if (!this.key) return;
     let remote;
     try {
-      remote = await pull(this.id);            // сеть
+      remote = await pull(this.chunkId);       // сеть
     } catch (e) {
       this.status('offline'); return;          // сервер реально недоступен
     }
     try {
       if (remote && remote.version > this.version) {
-        const json = await openGCM(this.key, b64.dec(remote.blob)); // расшифровка
+        const json = await openGCM(this.key, b64.dec(remote.blob), this.chunkId); // расшифровка
         this.version = remote.version;
         await this.opts.applyStateJSON(json);
       }
@@ -141,16 +189,16 @@ export class SyncEngine {
     }
   }
 
-  // Сменить пароль синка: перешифровать снимок новым ключом (новая соль) и выложить.
+  // Сменить пароль синка: перешифровать снимок новым ключом и выложить.
+  // Соль НЕ меняем (она канонная, в мете — иначе свежее устройство по мете вывело бы
+  // не тот ключ; смена пароля её менять не обязана). Новый ключ = Argon2(новыйПароль, та же соль).
   async changePassword(newPass) {
     if (!this.key) throw new Error('Синхронизация не активна');
     const kf = this.opts.getKeyfile() || null;
-    const newSalt = randomSalt();
-    const newKey = await deriveKey(newPass, kf, newSalt);
-    const blob = await sealGCM(newKey, this.opts.getStateJSON());
-    const r = await push(this.id, b64.enc(newSalt), b64.enc(blob), this.version);
+    const newKey = await deriveKey(newPass, kf, this.salt);
+    const blob = await sealGCM(newKey, this.opts.getStateJSON(), this.chunkId);
+    const r = await push(this.chunkId, b64.enc(this.salt), b64.enc(blob), this.version);
     if (!r.ok) throw new Error('На сервере есть несинхронизированные изменения — подожди пару секунд и повтори');
-    this.salt = newSalt;
     this.key = newKey;
     this.version = r.version;
     this.status('synced');

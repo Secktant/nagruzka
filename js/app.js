@@ -1,33 +1,54 @@
 import { SEED } from './seed.js';
 import {
-  initStore, loadState, exportState, importState,
-  putRecord as _putRecord, deleteRecord as _deleteRecord,
-  putRegular as _putRegular, deleteRegular as _deleteRegular,
-  putInstallment as _putInstallment, deleteInstallment as _deleteInstallment,
-  putSettings as _putSettings,
+  initStore, loadState, exportState,
+  saveVault, loadVault, hasVault, clearPlaintextStores, clearVault, saveLegacy,
   getKeyfile, setKeyfile, clearKeyfile,
   getSyncId, setSyncId, clearSyncId,
   getSyncKey, setSyncKey, clearSyncKey,
+  getLock, setLock, clearLock,
 } from './db.js';
 import {
   buildTimeline, installmentSummaries, generatePeriods, monthlyLoads, yearlyLoads,
   fmtMoney, groupThousands, fmtPeriod, fmtMonth, loadZone,
 } from './engine.js';
-import { generateKeyfile, encryptText, decryptToText, inspect } from './crypto.js';
-import { SyncEngine, isConfigured as syncConfigured, generateSyncId, isValidSyncId } from './sync.js';
+import { generateKeyfile, encryptText, encryptTextWithKey, decryptToText, inspect, deriveKeyRaw, importAesKey } from './crypto.js';
+import { SyncEngine, isConfigured as syncConfigured, generateSyncId, isValidSyncId, deriveChunkId, CHUNK_NAGRUZKA } from './sync.js';
+import { webauthnSupported, registerBiometric, unlockBiometric } from './lock.js';
 
-// Обёртки над записью в БД: после любого сохранения помечаем «грязным» для синка.
+// Персистентность (этап 4b): всё состояние сохраняется одним снимком через persist().
+// Есть ключ (синк настроен) → зашифрованный сейф (kv 'vault'); нет → плейнтекст-стора.
+// После любого сохранения помечаем «грязным» для синка. Все мутаторы — это persist+markDirty,
+// т.к. state в памяти всегда актуален (вызывающий код обновляет его до сохранения).
 const markDirty = () => syncEngine?.notifyLocalChange();
-const putRecord = (...a) => _putRecord(...a).then(r => (markDirty(), r));
-const deleteRecord = (...a) => _deleteRecord(...a).then(r => (markDirty(), r));
-const putRegular = (...a) => _putRegular(...a).then(r => (markDirty(), r));
-const deleteRegular = (...a) => _deleteRegular(...a).then(r => (markDirty(), r));
-const putInstallment = (...a) => _putInstallment(...a).then(r => (markDirty(), r));
-const deleteInstallment = (...a) => _deleteInstallment(...a).then(r => (markDirty(), r));
-const putSettings = (...a) => _putSettings(...a).then(r => (markDirty(), r));
+async function persist() {
+  if (vaultKey) await saveVault(db, vaultKey, state);
+  else await saveLegacy(db, state);
+}
+const saveAll = async () => { await persist(); markDirty(); };
+const putRecord = saveAll, deleteRecord = saveAll;
+const putRegular = saveAll, deleteRegular = saveAll;
+const putInstallment = saveAll, deleteInstallment = saveAll;
+const putSettings = saveAll;
+
+// Принять снимок из JSON (импорт файла / приём с сервера): заменить состояние и сохранить.
+async function adoptStateJSON(json) {
+  const d = JSON.parse(json);
+  if (d.app !== 'nagruzka' || !d.settings || !Array.isArray(d.records)) {
+    throw new Error('Это не похоже на резервную копию «Нагрузки»');
+  }
+  state = {
+    settings: d.settings,
+    regulars: d.regulars || [],
+    installments: d.installments || [],
+    records: (d.records || []).slice().sort((a, b) => a.period < b.period ? -1 : a.period > b.period ? 1 : 0),
+  };
+  await persist();
+}
 
 let db, state, timeline;
 let syncEngine = null;       // движок синка (null пока не настроен)
+let vaultKey = null;         // ключ локального шифрования (= ключ синка), null пока не настроен
+let vaultSalt = null;        // соль этого ключа (Uint8Array) — для синка и .nz
 let currentKeyfile = null;   // кэш keyfile в памяти (для движка, который читает синхронно)
 let syncStatus = 'off';      // off | locked | syncing | synced | offline | conflict | error
 const TODAY = new Date();
@@ -1356,6 +1377,23 @@ async function renderSettings() {
   const kf = await getKeyfile(db); // Uint8Array | undefined
   const sid = await getSyncId(db); // base64url-строка | undefined
 
+  // Замок (Шаг 5): включается, когда есть мастер-ключ (vaultKey); использует тот же ключ.
+  const lock = await getLock(db);
+  const lockCard = (vaultKey || lock) ? `
+    <section class="card">
+      <h3>Замок · Face / Touch ID</h3>
+      ${lock
+        ? `<div class="keyfile-status">Включён${lock.bio ? ' · вход по Face/Touch ID' : ' · только пароль'}. При открытии приложение спрашивает ${lock.bio ? 'Face/Touch ID (или пароль).' : 'пароль.'}</div>
+           <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
+             <button class="btn danger" id="lock-disable">Выключить замок</button>
+           </div>`
+        : `<div class="keyfile-status off">Выключен — данные шифруются, но открытие без пароля.</div>
+           <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
+             <button class="btn primary" id="lock-enable" ${vaultKey ? '' : 'disabled'}>Включить замок (Face/Touch ID)</button>
+           </div>
+           ${vaultKey ? '<p class="hint">Один раз подтвердишь пароль → дальше вход по Face/Touch ID (пароль — запасной).</p>' : '<p class="hint">Сначала включи синхронизацию — замок использует тот же ключ.</p>'}`}
+    </section>` : '';
+
   $('#view-settings').innerHTML = `
     <div class="section-head"><h2>Настройки</h2></div>
 
@@ -1422,6 +1460,7 @@ async function renderSettings() {
         <button class="btn" id="enc-import-btn">🔓 Загрузить зашифрованную</button>
         <input type="file" id="enc-import-file" hidden>
       </div>
+      <p class="hint">Один пароль на всё: файл открывается тем же паролем, что синхронизация (+ keyfile). Отдельный пароль для файла задавать не нужно.</p>
     </section>
 
     ${syncConfigured() ? `
@@ -1452,7 +1491,8 @@ async function renderSettings() {
         ${!sid ? 'Создай Sync ID на одном устройстве, «Скопировать» → на втором «Вставить» тот же. ' : ''}
         ${!kf ? '<b>Нужен keyfile</b> (выше) — без него синк не расшифровать.' : ''}
       </p>` : ''}
-    </section>` : ''}`;
+    </section>` : ''}
+    ${lockCard}`;
 
   $('#salary-input').addEventListener('input', async e => {
     const v = parseMoney(e.target.value);
@@ -1465,6 +1505,37 @@ async function renderSettings() {
   $$('#view-settings [data-reg]').forEach(el => {
     el.addEventListener('click', () => openRegularForm(el.dataset.reg));
   });
+
+  // Замок (Шаг 5): включение/выключение. Использует тот же ключ, что синк (vaultKey/vaultSalt).
+  if ($('#lock-enable')) $('#lock-enable').onclick = async () => {
+    const salt = vaultSalt || (await getSyncKey(db))?.salt;
+    if (!vaultKey || !salt) { alert('Сначала включи синхронизацию — замок использует тот же ключ.'); return; }
+    const pass = prompt('Подтверди пароль (тот же, что синхронизация), чтобы включить замок:');
+    if (!pass) return;
+    let rawK;
+    try {
+      rawK = await deriveKeyRaw(pass, currentKeyfile, salt);
+      if (await hasVault(db)) await loadVault(db, await importAesKey(rawK)); // проверка пароля
+    } catch { alert('Пароль или keyfile не подходят.'); return; }
+    let bio = null;
+    if (webauthnSupported()) {
+      try { bio = await registerBiometric(rawK); }
+      catch (e) { if (!confirm('Биометрию включить не вышло (' + (e.message || 'отменено') + ').\nВключить замок только с паролем?')) return; }
+    } else if (!confirm('Это устройство не поддерживает Face/Touch ID для входа. Включить замок только с паролем?')) {
+      return;
+    }
+    await setLock(db, { salt, bio });
+    await clearSyncKey(db); // убрать свободно-используемый кэш → гейт на следующем старте
+    alert('Замок включён ✓ При следующем открытии приложение спросит ' + (bio ? 'Face/Touch ID (или пароль).' : 'пароль.'));
+    render();
+  };
+  if ($('#lock-disable')) $('#lock-disable').onclick = async () => {
+    if (!confirm('Выключить замок? Открытие перестанет спрашивать Face/Touch ID/пароль (данные останутся зашифрованы).')) return;
+    await clearLock(db);
+    if (vaultKey && vaultSalt) await setSyncKey(db, { key: vaultKey, salt: vaultSalt }); // вернуть «запомнить на устройстве»
+    alert('Замок выключен.');
+    render();
+  };
 
   $('#settings-banks').addEventListener('click', async e => {
     if (e.target.id === 'settings-add-bank') {
@@ -1499,8 +1570,7 @@ async function renderSettings() {
     if (!file) return;
     if (!confirm('Импорт ЗАМЕНИТ все текущие данные содержимым файла. Продолжить?')) return;
     try {
-      await importState(db, await file.text());
-      state = await loadState(db);
+      await adoptStateJSON(await file.text());
       render();
       markDirty(); // если синк включён — выгрузить импортированные данные на сервер
       alert('Импорт выполнен ✓');
@@ -1550,12 +1620,20 @@ async function renderSettings() {
 
   // --- зашифрованная копия ---
   $('#enc-export-btn').onclick = async () => {
-    const pass = prompt('Пароль для шифрования (запишите его — без него файл не открыть):');
-    if (!pass) return;
-    const again = prompt('Повторите пароль:');
-    if (pass !== again) { alert('Пароли не совпали.'); return; }
     try {
-      const bytes = await encryptText(exportState(state), pass, kf);
+      let bytes;
+      if (syncEngine?.key && syncEngine?.salt) {
+        // один пароль: файл шифруется ключом синхронизации (keyfile для синка обязателен),
+        // открывается тем же паролем приложения — отдельный пароль для файла не нужен.
+        bytes = await encryptTextWithKey(exportState(state), syncEngine.key, syncEngine.salt, !!kf);
+      } else {
+        // синхронизация не настроена — задаём пароль для файла вручную
+        const pass = prompt('Пароль для шифрования (запиши — без него файл не открыть):');
+        if (!pass) return;
+        const again = prompt('Повтори пароль:');
+        if (pass !== again) { alert('Пароли не совпали.'); return; }
+        bytes = await encryptText(exportState(state), pass, kf);
+      }
       downloadBytes(bytes, `nagruzka-${todayISO()}.nz`);
       alert('Зашифрованная копия сохранена ✓' + (kf ? '\n(с keyfile)' : '\n(без keyfile — только пароль)'));
     } catch (err) {
@@ -1574,9 +1652,19 @@ async function renderSettings() {
         alert('Этот файл зашифрован с keyfile, а на устройстве его нет. Сначала загрузите keyfile.');
         return;
       }
-      const pass = prompt('Пароль от зашифрованной копии:');
+      const pass = prompt('Пароль от копии (обычно — пароль синхронизации):');
       if (!pass) return;
-      const json = await decryptToText(bytes, pass, meta.needsKeyfile ? kf : null);
+      const useKf = meta.needsKeyfile ? kf : null;
+      // Бэкап чанка привязан к AAD=id чанка; ручной экспорт и legacy-бэкап — без AAD.
+      // Пробуем с AAD, при неудаче — без (неверный пароль провалит обе → корректная ошибка).
+      const chunkAad = sid ? await deriveChunkId(sid, CHUNK_NAGRUZKA) : null;
+      let json;
+      try {
+        json = await decryptToText(bytes, pass, useKf, chunkAad);
+      } catch (e1) {
+        if (!chunkAad) throw e1;
+        json = await decryptToText(bytes, pass, useKf); // ретрай без AAD
+      }
       // что внутри — показываем перед заменой
       const data = JSON.parse(json);
       const when = (data.exportedAt || '').slice(0, 10);
@@ -1587,8 +1675,7 @@ async function renderSettings() {
       );
       if (!ok) return;
       downloadBytes(exportState(state), `nagruzka-before-import-${todayISO()}.json`, 'application/json');
-      await importState(db, json);
-      state = await loadState(db);
+      await adoptStateJSON(json);
       render();
       markDirty(); // если синк включён — выгрузить импортированные данные на сервер
       alert('Импорт выполнен ✓');
@@ -1616,7 +1703,8 @@ async function renderSettings() {
       const txt = (prompt('Вставь Sync ID со второго устройства:') || '').trim();
       if (!txt) return;
       if (!isValidSyncId(txt)) { alert('Это не похоже на Sync ID «Нагрузки».'); return; }
-      // смена Sync ID = другая ячейка: сбрасываем сохранённый ключ синка
+      // смена Sync ID = другая ячейка: возвращаем данные в плейнтекст, сбрасываем ключ/сейф
+      if (vaultKey) { await saveLegacy(db, state); await clearVault(db); vaultKey = null; }
       if (syncEngine) { syncEngine.stop(); syncEngine.key = null; }
       syncStatus = 'off';
       await clearSyncKey(db);
@@ -1626,6 +1714,7 @@ async function renderSettings() {
     };
     if ($('#sid-clear')) $('#sid-clear').onclick = async () => {
       if (!confirm('Удалить Sync ID с этого устройства? Синхронизация здесь отключится.')) return;
+      if (vaultKey) { await saveLegacy(db, state); await clearVault(db); vaultKey = null; } // вернуть в плейнтекст
       if (syncEngine) { syncEngine.stop(); syncEngine.key = null; }
       syncStatus = 'off';
       await clearSyncId(db);
@@ -1640,6 +1729,11 @@ async function renderSettings() {
         syncStatus = 'syncing'; updateSyncStatusUI();
         await syncEngine.unlock(sid, pass);   // деривация ключа + первая сверка с сервером
         await setSyncKey(db, { key: syncEngine.key, salt: syncEngine.salt }); // запомнить на устройстве
+        vaultKey = syncEngine.key;             // включаем локальное шифрование тем же ключом
+        if (!(await hasVault(db))) {            // первая настройка → перенести плейнтекст в сейф
+          await saveVault(db, vaultKey, state);
+          await clearPlaintextStores(db);
+        }
         syncEngine.start();                    // фоновый опрос
         render();
       } catch (err) {
@@ -1649,10 +1743,8 @@ async function renderSettings() {
       }
     };
     if ($('#sync-off')) $('#sync-off').onclick = async () => {
-      syncEngine.stop();
-      syncEngine.key = null;
-      syncStatus = 'off';
-      await clearSyncKey(db);   // забыть ключ — при следующем включении спросит пароль
+      syncEngine.stop();        // только остановить обмен; ключ и сейф оставляем —
+      syncStatus = 'off';       // локальные данные должны читаться без пароля (замок — Шаг 5)
       render();
     };
     if ($('#sync-pass')) $('#sync-pass').onclick = async () => {
@@ -1664,6 +1756,8 @@ async function renderSettings() {
       try {
         await syncEngine.changePassword(p1);                               // перешифровать + выложить
         await setSyncKey(db, { key: syncEngine.key, salt: syncEngine.salt }); // запомнить новый ключ
+        vaultKey = syncEngine.key;                                          // и пересохранить сейф новым ключом
+        if (await hasVault(db)) await saveVault(db, vaultKey, state);
         alert('Пароль синхронизации изменён ✓\n\nНа ДРУГИХ устройствах синк покажет «не удалось расшифровать» — там нажми «Выключить» и снова «Включить» уже с новым паролем.');
         render();
       } catch (err) {
@@ -1778,8 +1872,7 @@ function createSyncEngine() {
   return new SyncEngine({
     getStateJSON: () => exportState(state),
     applyStateJSON: async (json) => {
-      await importState(db, json);        // пишет напрямую, не через обёртки — без эха
-      state = await loadState(db);
+      await adoptStateJSON(json);          // заменить состояние и сохранить (сейф/плейнтекст), без эха
       render();
     },
     getKeyfile: () => currentKeyfile || null,
@@ -1812,19 +1905,104 @@ function updateConnBanner(s) {
   if (s === 'error')   { showToast('bad', '⚠ Не удалось расшифровать — проверь пароль/keyfile', 0); prevConn = 'error'; return; }
 }
 
+// Экран-замок (Шаг 5): блокирует приложение, пока K не получен биометрией или паролём.
+// Сначала АВТО-попытка Face/Touch ID; после MAX неудач открывается вход по паролю.
+// Без зарегистрированной биометрии (замок только с паролём) — пароль сразу.
+const LOCK_MAX_BIO = 5;
+function runLockGate(lock) {
+  return new Promise((resolve) => {
+    const ov = document.createElement('div');
+    ov.className = 'lock-overlay';
+    ov.innerHTML = `
+      <div class="lock-box">
+        <div class="lock-logo">🔒</div>
+        <div class="lock-title">Нагрузка</div>
+        <div class="lock-status" id="lock-status"></div>
+        <button class="btn primary" id="lock-bio" hidden>Повторить · Face / Touch ID</button>
+        <button class="btn" id="lock-pass" hidden>Войти по паролю</button>
+        <div class="lock-err" id="lock-err"></div>
+      </div>`;
+    document.body.appendChild(ov);
+    const statusEl = ov.querySelector('#lock-status');
+    const errEl = ov.querySelector('#lock-err');
+    const bioBtn = ov.querySelector('#lock-bio');
+    const passBtn = ov.querySelector('#lock-pass');
+    const setStatus = (m) => { statusEl.textContent = m || ''; };
+    const setErr = (m) => { errEl.textContent = m || ''; };
+    const done = (key) => { ov.remove(); resolve(key); };
+    const revealPassword = () => { bioBtn.hidden = true; passBtn.hidden = false; };
+
+    let attempts = 0;
+    const tryBio = async () => {
+      bioBtn.hidden = true;
+      setErr(''); setStatus('Разблокировка по Face / Touch ID…');
+      try {
+        done(await importAesKey(await unlockBiometric(lock.bio)));
+      } catch (e) {
+        attempts++;
+        setStatus('');
+        if (attempts >= LOCK_MAX_BIO) {
+          setErr(`Не удалось ${LOCK_MAX_BIO} раз — войди по паролю.`);
+          revealPassword();
+        } else {
+          setErr(`Не вышло (${attempts}/${LOCK_MAX_BIO}). Повтори.`);
+          bioBtn.hidden = false;
+        }
+      }
+    };
+    bioBtn.onclick = tryBio;
+
+    passBtn.onclick = async () => {
+      const pass = prompt('Пароль (тот же, что синхронизация):');
+      if (!pass) return;
+      setErr(''); setStatus('Проверяю…');
+      try {
+        const key = await importAesKey(await deriveKeyRaw(pass, currentKeyfile, lock.salt));
+        if (await hasVault(db)) await loadVault(db, key); // бросит при неверном пароле/keyfile
+        done(key);
+      } catch (e) {
+        setStatus(''); setErr('Неверный пароль или keyfile.');
+      }
+    };
+
+    if (lock.bio) tryBio();      // авто-попытка биометрии при появлении замка
+    else revealPassword();        // биометрии нет — сразу пароль
+  });
+}
+
 async function main() {
   db = await initStore(SEED);
-  state = await loadState(db);
   currentKeyfile = await getKeyfile(db);
+  const lock = await getLock(db);
+
+  if (lock) {
+    // ЗАМОК (Шаг 5): K открывается биометрией/паролём (overlay блокирует до успеха).
+    vaultKey = await runLockGate(lock);
+    vaultSalt = lock.salt;
+  } else {
+    // Путь 4b: свободно-используемый кэш-ключ «запомнить на устройстве».
+    const saved = await getSyncKey(db);
+    if (saved?.key) { vaultKey = saved.key; vaultSalt = saved.salt; }
+  }
+
+  // Загрузка состояния: есть ключ → зашифрованный сейф; иначе плейнтекст (или seed).
+  if (vaultKey && await hasVault(db)) {
+    state = await loadVault(db, vaultKey);
+  } else {
+    state = await loadState(db);
+    if (vaultKey && !lock) {                    // 4b-миграция плейнтекст→сейф (вне замка-гейта)
+      await saveVault(db, vaultKey, state);
+      if (await loadVault(db, vaultKey)) await clearPlaintextStores(db); // чистим только после успешного чтения
+    }
+  }
+
   if (syncConfigured()) {
     syncEngine = createSyncEngine();
-    // «Запомнить на устройстве»: если ключ сохранён — поднимаем синк без ввода пароля.
     const sid = await getSyncId(db);
-    const saved = await getSyncKey(db);
-    if (sid && saved?.key) {
-      syncEngine.id = sid;
-      syncEngine.key = saved.key;
-      syncEngine.salt = saved.salt;
+    if (sid && vaultKey) {
+      await syncEngine.prepare(sid);   // вычислить id чанка/меты из Sync ID
+      syncEngine.key = vaultKey;
+      syncEngine.salt = vaultSalt;
       syncEngine.version = 0;      // подтянем актуальную версию из сервера ниже
       syncStatus = 'synced';
       syncEngine.start();

@@ -608,3 +608,19 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
     overflow-x: hidden;
   }
 }
+
+/* Экран-замок (Шаг 5): полноэкранный гейт до разблокировки биометрией/паролём */
+.lock-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg);
+}
+.lock-box {
+  display: flex; flex-direction: column; gap: 12px;
+  width: min(320px, 86vw); text-align: center; padding: 28px 22px;
+}
+.lock-logo { font-size: 40px; line-height: 1; }
+.lock-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
+.lock-box .btn { width: 100%; justify-content: center; }
+.lock-err { color: var(--red); font-size: 13px; min-height: 18px; }
+.lock-status { color: var(--muted); font-size: 14px; min-height: 18px; }

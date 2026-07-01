@@ -1,7 +1,7 @@
 // Service worker «Нагрузки». Стратегия: network-first с откатом в кэш —
 // онлайн всегда свежие файлы, офлайн работает из кэша.
 // Версию кэша поднимать при изменении набора файлов.
-const CACHE = 'nagruzka-v38';
+const CACHE = 'nagruzka-v39';
 const ASSETS = [
   './',
   'index.html',
@@ -14,6 +14,7 @@ const ASSETS = [
   'js/crypto.js',
   'js/sync.js',
   'js/sync-config.js',
+  'js/lock.js',
   'js/vendor/argon2.umd.min.js',
   'icons/favicon.svg',
   'icons/favicon-32.png',
