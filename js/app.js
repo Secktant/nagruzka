@@ -1708,12 +1708,13 @@ async function renderSettings() {
       try {
         syncStatus = 'syncing'; updateSyncStatusUI();
         await syncEngine.unlock(sid, pass);   // деривация ключа + первая сверка с сервером
-        await setSyncKey(db, { key: syncEngine.key, salt: syncEngine.salt }); // запомнить на устройстве
+        // «Запомнить на устройстве» — только БЕЗ замка: при замке K не должен лежать готовым.
+        if (!(await getLock(db))) await setSyncKey(db, { key: syncEngine.key, salt: syncEngine.salt });
         vaultKey = syncEngine.key;             // включаем локальное шифрование тем же ключом
-        if (!(await hasVault(db))) {            // первая настройка → перенести плейнтекст в сейф
-          await saveVault(db, vaultKey, state);
-          await clearPlaintextStores(db);
-        }
+        vaultSalt = syncEngine.salt;
+        const firstVault = !(await hasVault(db));
+        await saveVault(db, vaultKey, state);  // сейф всегда перешифрован ТЕКУЩИМ ключом
+        if (firstVault) await clearPlaintextStores(db); // первая настройка → плейнтекст убрать
         syncEngine.start();                    // фоновый опрос
         render();
       } catch (err) {
@@ -1735,10 +1736,23 @@ async function renderSettings() {
       if (p1 !== p2) { alert('Пароли не совпали.'); return; }
       try {
         await syncEngine.changePassword(p1);                               // перешифровать + выложить
-        await setSyncKey(db, { key: syncEngine.key, salt: syncEngine.salt }); // запомнить новый ключ
         vaultKey = syncEngine.key;                                          // и пересохранить сейф новым ключом
         if (await hasVault(db)) await saveVault(db, vaultKey, state);
-        alert('Пароль синхронизации изменён ✓\n\nНа ДРУГИХ устройствах синк покажет «не удалось расшифровать» — там нажми «Выключить» и снова «Включить» уже с новым паролем.');
+        // При активном замке кэш-ключ НЕ восстанавливаем (иначе K снова лежит в готовом
+        // виде и гейт обесценен), а биометрия заворачивает СТАРЫЙ ключ → сбрасываем её,
+        // иначе на старте она развернёт ключ, которым сейф уже не открыть.
+        const lock = await getLock(db);
+        if (lock) {
+          const hadBio = !!lock.bio;
+          await setLock(db, { salt: lock.salt, bio: null });
+          await clearSyncKey(db); // старый кэш-ключ (если остался) больше не нужен и не должен лежать
+          alert('Пароль синхронизации изменён ✓\n\nЗамок теперь открывается НОВЫМ паролем.'
+            + (hadBio ? '\nFace/Touch ID сброшен (он был привязан к старому паролю) — включи заново: Настройки → «Выключить замок» → «Включить замок».' : '')
+            + '\n\nНа ДРУГИХ устройствах синк покажет «не удалось расшифровать» — там нажми «Выключить» и снова «Включить» уже с новым паролем.');
+        } else {
+          await setSyncKey(db, { key: syncEngine.key, salt: syncEngine.salt }); // запомнить новый ключ
+          alert('Пароль синхронизации изменён ✓\n\nНа ДРУГИХ устройствах синк покажет «не удалось расшифровать» — там нажми «Выключить» и снова «Включить» уже с новым паролем.');
+        }
         render();
       } catch (err) {
         alert(err.message);
@@ -1978,8 +1992,9 @@ function runLockGate(lock) {
     const tryBio = async (isAuto) => {
       bioBtn.hidden = true;
       setErr(''); setStatus('Разблокировка по Face / Touch ID…');
+      let key = null;
       try {
-        done(await importAesKey(await unlockBiometric(lock.bio)));
+        key = await importAesKey(await unlockBiometric(lock.bio));
       } catch (e) {
         setStatus('');
         if (!isAuto) attempts++;
@@ -1990,6 +2005,19 @@ function runLockGate(lock) {
           setErr(isAuto ? 'Нажми, чтобы разблокировать.' : `Не вышло (${attempts}/${LOCK_MAX_BIO}). Повтори.`);
           bioBtn.hidden = false;
         }
+        return;
+      }
+      // Страховка: ключ развернулся, но подходит ли он к сейфу? Рассинхрон возможен,
+      // если пароль меняли (биометрия заворачивает старый ключ) — повторять Face ID
+      // бессмысленно, сбрасываем устаревшую биометрию и уводим на пароль.
+      try {
+        if (await hasVault(db)) await loadVault(db, key);
+        done(key);
+      } catch (e) {
+        setStatus('');
+        await setLock(db, { salt: lock.salt, bio: null }).catch(() => {});
+        setErr('Ключ Face/Touch ID устарел (менялся пароль?) — войди по паролю и включи замок заново.');
+        revealPassword();
       }
     };
     bioBtn.onclick = () => tryBio(false);
