@@ -24,7 +24,9 @@ async function prfAssert(rawId) {
   const assertion = await navigator.credentials.get({ publicKey: {
     challenge: crypto.getRandomValues(new Uint8Array(32)),
     rpId: rpId(),
-    allowCredentials: [{ id: rawId, type: 'public-key' }],
+    // transports:['internal'] — подсказка «ключ в этом устройстве»: направляет систему
+    // прямо к платформенному аутентификатору (Touch/Face ID), минуя шторку выбора passkey.
+    allowCredentials: [{ id: rawId, type: 'public-key', transports: ['internal'] }],
     userVerification: 'required',
     extensions: { prf: { eval: { first: PRF_SALT } } },
     timeout: 60000,
