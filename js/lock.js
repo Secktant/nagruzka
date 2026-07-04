@@ -24,8 +24,11 @@ async function prfAssert(rawId) {
   const assertion = await navigator.credentials.get({ publicKey: {
     challenge: crypto.getRandomValues(new Uint8Array(32)),
     rpId: rpId(),
-    allowCredentials: [{ id: rawId, type: 'public-key' }],
+    // transports:['internal'] — подсказка «ключ в этом устройстве»: направляет систему
+    // прямо к платформенному аутентификатору (Touch/Face ID), минуя шторку выбора passkey.
+    allowCredentials: [{ id: rawId, type: 'public-key', transports: ['internal'] }],
     userVerification: 'required',
+    hints: ['client-device'],   // Safari 18+: ключ на ЭТОМ устройстве → без «Другие параметры» (кросс-девайс)
     extensions: { prf: { eval: { first: PRF_SALT } } },
     timeout: 60000,
   }});
@@ -42,8 +45,11 @@ export async function registerBiometric(rawK) {
     user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'nagruzka', displayName: 'Нагрузка' },
     pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
     authenticatorSelection: {
-      authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred',
+      // discouraged → НЕ discoverable: ключ device-bound (не уезжает в iCloud «Пароли»),
+      // credentialId мы храним сами. Цель — проще системная шторка. PRF работает и так.
+      authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged',
     },
+    hints: ['client-device'],   // регистрируем как ключ ЭТОГО устройства (без кросс-девайс)
     extensions: { prf: { eval: { first: PRF_SALT } } },
     timeout: 60000,
   }});
