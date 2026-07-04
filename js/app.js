@@ -16,65 +16,29 @@ import { SyncEngine, isConfigured as syncConfigured, generateSyncId, isValidSync
 import { webauthnSupported, registerBiometric, unlockBiometric } from './lock.js';
 import { todayISO, horizonEnd, fmtPeriodFull, addDays, payKey, payTypeMark, plural } from './format.js';
 import { $, $$, esc, uid, parseMoney, fmtNumEditor, moneyInput, wireMoneyInputs, openModal, closeModal } from './dom.js';
+import {
+  S, recalc, markDirty, adoptStateJSON,
+  putRecord, deleteRecord, putRegular, deleteRegular, putInstallment, deleteInstallment, putSettings,
+} from './store.js';
 
-// Персистентность (этап 4b): всё состояние сохраняется одним снимком через persist().
-// Есть ключ (синк настроен) → зашифрованный сейф (kv 'vault'); нет → плейнтекст-стора.
-// После любого сохранения помечаем «грязным» для синка. Все мутаторы — это persist+markDirty,
-// т.к. state в памяти всегда актуален (вызывающий код обновляет его до сохранения).
-const markDirty = () => syncEngine?.notifyLocalChange();
-async function persist() {
-  if (vaultKey) await saveVault(db, vaultKey, state);
-  else await saveLegacy(db, state);
-}
-const saveAll = async () => { await persist(); markDirty(); };
-const putRecord = saveAll, deleteRecord = saveAll;
-const putRegular = saveAll, deleteRegular = saveAll;
-const putInstallment = saveAll, deleteInstallment = saveAll;
-const putSettings = saveAll;
-
-// Принять снимок из JSON (импорт файла / приём с сервера): заменить состояние и сохранить.
-async function adoptStateJSON(json) {
-  const d = JSON.parse(json);
-  if (d.app !== 'nagruzka' || !d.settings || !Array.isArray(d.records)) {
-    throw new Error('Это не похоже на резервную копию «Нагрузки»');
-  }
-  state = {
-    settings: d.settings,
-    regulars: d.regulars || [],
-    installments: d.installments || [],
-    records: (d.records || []).slice().sort((a, b) => a.period < b.period ? -1 : a.period > b.period ? 1 : 0),
-  };
-  await persist();
-}
-
-let db, state, timeline;
-let syncEngine = null;       // движок синка (null пока не настроен)
-let vaultKey = null;         // ключ локального шифрования (= ключ синка), null пока не настроен
-let vaultSalt = null;        // соль этого ключа (Uint8Array) — для синка и .nz
-let currentKeyfile = null;   // кэш keyfile в памяти (для движка, который читает синхронно)
-let syncStatus = 'off';      // off | locked | syncing | synced | offline | conflict | error
-const TODAY = new Date();
-let view = { y: TODAY.getFullYear(), m: TODAY.getMonth() + 1, tab: 'periods', chartYear: TODAY.getFullYear() };
-let zoomLevel = 1; // текущий масштаб (для развилки раскладки «Периодов»)
 
 // Режим «Периодов»: на широком экране и масштабе < 150% — лента-прогноз за год
 // (скролл, навигация по годам); иначе (телефон ИЛИ 150%) — один месяц, навигация по месяцам.
 const isWide = () => window.matchMedia('(min-width: 1180px)').matches;
-const isForecast = () => isWide() && zoomLevel < 1.5;
+const isForecast = () => isWide() && S.zoomLevel < 1.5;
 
 // ───────────────────────── рендер ─────────────────────────
 
-function recalc() { timeline = buildTimeline(state, horizonEnd()); }
 
 function render() {
   recalc();
-  $('#month-nav').style.visibility = view.tab === 'periods' ? 'visible' : 'hidden';
-  $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === view.tab));
-  $$('.view').forEach(v => v.hidden = v.id !== `view-${view.tab}`);
-  if (view.tab === 'periods') renderPeriods();
-  if (view.tab === 'debts') renderDebts();
-  if (view.tab === 'chart') renderChart();
-  if (view.tab === 'settings') renderSettings();
+  $('#month-nav').style.visibility = S.view.tab === 'periods' ? 'visible' : 'hidden';
+  $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === S.view.tab));
+  $$('.view').forEach(v => v.hidden = v.id !== `view-${S.view.tab}`);
+  if (S.view.tab === 'periods') renderPeriods();
+  if (S.view.tab === 'debts') renderDebts();
+  if (S.view.tab === 'chart') renderChart();
+  if (S.view.tab === 'settings') renderSettings();
 }
 
 // ───────────────────────── периоды ─────────────────────────
@@ -82,17 +46,17 @@ function render() {
 function renderPeriods() {
   const forecast = isForecast();
   document.querySelector('.shell')?.classList.toggle('forecast-mode', forecast);
-  const prefix = `${view.y}-${String(view.m).padStart(2, '0')}`;
+  const prefix = `${S.view.y}-${String(S.view.m).padStart(2, '0')}`;
   // forecast: вся лента года (с января выбранного года), навигация по годам;
   // иначе: один месяц, навигация по месяцам.
-  $('#month-title').textContent = forecast ? String(view.y) : fmtMonth(view.y, view.m);
+  $('#month-title').textContent = forecast ? String(S.view.y) : fmtMonth(S.view.y, S.view.m);
   const days = forecast
-    ? [...timeline.values()].filter(d => d.period >= `${view.y}-01-01` && d.period < `${view.y + 1}-01-01`)
-    : [...timeline.values()].filter(d => d.period.startsWith(prefix));
+    ? [...S.timeline.values()].filter(d => d.period >= `${S.view.y}-01-01` && d.period < `${S.view.y + 1}-01-01`)
+    : [...S.timeline.values()].filter(d => d.period.startsWith(prefix));
   const container = $('#periods');
   if (!days.length) {
     container.innerHTML = forecast
-      ? `<div class="empty">За ${view.y} год периодов нет. История с января 2026.</div>`
+      ? `<div class="empty">За ${S.view.y} год периодов нет. История с января 2026.</div>`
       : `<div class="empty">Нет периодов в этом месяце — история с января 2026.</div>`;
     return;
   }
@@ -143,16 +107,16 @@ function renderPeriods() {
       if (!data?.src || !target || target === data.src) return;
 
       if (data.inst) {                                   // платёж рассрочки
-        const inst = state.installments.find(i => i.id === data.inst);
+        const inst = S.state.installments.find(i => i.id === data.inst);
         if (!inst) return;
         if (data.rec) {                                  // реальная запись → факт-дата, старый слот плана убрать
-          const rec = state.records.find(r => r.id === data.rec);
+          const rec = S.state.records.find(r => r.id === data.rec);
           if (!rec) return;
           rec.period = target;
           if (inst.plan) inst.plan = inst.plan.filter(it => it.period !== data.src);
-          state.records.sort(byPeriodAsc);
-          await putRecord(db, rec);
-          await putInstallment(db, inst);
+          S.state.records.sort(byPeriodAsc);
+          await putRecord(S.db, rec);
+          await putInstallment(S.db, inst);
         } else {                                         // виртуальный слот плана → пере-датировать
           if (!inst.plan) return;
           if (inst.plan.some(it => it.period === target)) return; // дата уже занята этой рассрочкой
@@ -160,14 +124,14 @@ function renderPeriods() {
           if (!slot) return;
           slot.period = target;
           inst.plan.sort(byPeriodAsc);
-          await putInstallment(db, inst);
+          await putInstallment(S.db, inst);
         }
       } else if (data.rec) {                             // разовый платёж
-        const rec = state.records.find(r => r.id === data.rec);
+        const rec = S.state.records.find(r => r.id === data.rec);
         if (!rec) return;
         rec.period = target;
-        state.records.sort(byPeriodAsc);
-        await putRecord(db, rec);
+        S.state.records.sort(byPeriodAsc);
+        await putRecord(S.db, rec);
       }
       render();
     });
@@ -235,7 +199,7 @@ function paymentRow(period, p) {
 
 function findPayment(period, key) {
   const [type, id] = key.split('|');
-  const day = timeline.get(period);
+  const day = S.timeline.get(period);
   if (type === 'r') return day.payments.find(x => !x.virtual && x.id === id);
   return day.payments.find(x => x.virtual && (x.regularId === id || x.installmentId === id));
 }
@@ -243,10 +207,10 @@ function findPayment(period, key) {
 async function togglePaid(fullKey, checked) {
   const [period, type, id] = fullKey.split('|');
   if (type === 'r') {
-    const rec = state.records.find(r => r.id === id);
+    const rec = S.state.records.find(r => r.id === id);
     if (!rec) return;
     rec.paid = checked;
-    await putRecord(db, rec);
+    await putRecord(S.db, rec);
   } else {
     const p = findPayment(period, `${type}|${id}`);
     if (!p) return;
@@ -263,16 +227,16 @@ async function materialize(period, p, overrides = {}) {
   };
   if (p.regularId) rec.regularId = p.regularId;
   if (p.installmentId) rec.installmentId = p.installmentId;
-  state.records.push(rec);
-  state.records.sort((a, b) => a.period < b.period ? -1 : 1);
-  await putRecord(db, rec);
+  S.state.records.push(rec);
+  S.state.records.sort((a, b) => a.period < b.period ? -1 : 1);
+  await putRecord(S.db, rec);
   return rec;
 }
 
 // ───────────────────────── модалка ─────────────────────────
 
 function bankChipsHTML(selected) {
-  const chips = state.settings.banks.map(b => `
+  const chips = S.state.settings.banks.map(b => `
     <button type="button" class="chip pick ${b === selected ? 'sel' : ''}" data-bank="${esc(b)}">${esc(b)}</button>`).join('');
   return `
   <div class="chips" id="bank-chips">
@@ -290,9 +254,9 @@ function wireBankChips(onChange) {
       const name = prompt('Название банка');
       if (!name || !name.trim()) return;
       const bank = name.trim();
-      if (!state.settings.banks.includes(bank)) {
-        state.settings.banks.push(bank);
-        await putSettings(db, state.settings);
+      if (!S.state.settings.banks.includes(bank)) {
+        S.state.settings.banks.push(bank);
+        await putSettings(S.db, S.state.settings);
       }
       btn.insertAdjacentHTML('beforebegin',
         `<button type="button" class="chip pick" data-bank="${esc(bank)}">${esc(bank)}</button>`);
@@ -313,13 +277,13 @@ function openPaymentForm(period, key) {
   const p = key ? findPayment(period, key) : null;
   const isNew = !p;
   const isVirtual = p?.virtual;
-  const names = [...new Set(state.records
+  const names = [...new Set(S.state.records
     .filter(r => r.kind === 'expense' && !r.skipped).map(r => r.name).reverse())];
 
   // разовый платёж (можно делать отрицательным = «мне должны»)
   const isOneOff = isNew || (!p?.regularId && !p?.installmentId);
   const isInst = !!p?.installmentId;
-  const instObj = isInst ? state.installments.find(i => i.id === p.installmentId) : null;
+  const instObj = isInst ? S.state.installments.find(i => i.id === p.installmentId) : null;
   // для виртуального платежа рассрочки берём сумму из СЛОТА плана (а не из p.amount,
   // которая может быть «капнута» остатком при досрочном погашении)
   const planSlot = (isVirtual && instObj?.plan) ? instObj.plan.find(it => it.period === period) : null;
@@ -328,7 +292,7 @@ function openPaymentForm(period, key) {
   const canMove = !isNew && !isVirtual && !p.installmentId && !p.regularId;
   // поле «Дата» показываем для разового И для рассрочки (не для регулярного и не для нового)
   const showDate = !isNew && !p.regularId;
-  const movePeriods = showDate ? generatePeriods(state.settings.startPeriod, horizonEnd()) : [];
+  const movePeriods = showDate ? generatePeriods(S.state.settings.startPeriod, horizonEnd()) : [];
   if (showDate && !movePeriods.includes(period)) { movePeriods.push(period); movePeriods.sort(); }
 
   openModal(`
@@ -385,12 +349,12 @@ function openPaymentForm(period, key) {
     } else {
       if (!confirm(`Удалить «${p.name}»?`)) return;
       if (p.regularId) { // вместо удаления — скрыть, иначе вернётся виртуальный
-        const rec = state.records.find(r => r.id === p.id);
+        const rec = S.state.records.find(r => r.id === p.id);
         rec.skipped = true; rec.paid = false;
-        await putRecord(db, rec);
+        await putRecord(S.db, rec);
       } else {
-        state.records = state.records.filter(r => r.id !== p.id);
-        await deleteRecord(db, p.id);
+        S.state.records = S.state.records.filter(r => r.id !== p.id);
+        await deleteRecord(S.db, p.id);
       }
     }
     closeModal(); render();
@@ -414,12 +378,12 @@ function openPaymentForm(period, key) {
     }
     if (isNew) {
       const rec = { id: uid('p'), period, kind: 'expense', name, amount, bank, paid: false };
-      state.records.push(rec);
-      state.records.sort((a, b) => a.period < b.period ? -1 : 1);
-      await putRecord(db, rec);
+      S.state.records.push(rec);
+      S.state.records.sort((a, b) => a.period < b.period ? -1 : 1);
+      await putRecord(S.db, rec);
     } else if (isInst) {
       // платёж рассрочки: дата меняет либо слот плана (виртуальный), либо период записи (реальный)
-      const inst = state.installments.find(i => i.id === p.installmentId);
+      const inst = S.state.installments.find(i => i.id === p.installmentId);
       const newPeriod = (showDate && f.get('period')) || period;
       if (isVirtual) {
         if (inst?.plan) {
@@ -428,30 +392,30 @@ function openPaymentForm(period, key) {
           }
           const slot = inst.plan.find(it => it.period === period);
           if (slot) { slot.period = newPeriod; slot.amount = amount; inst.plan.sort((a, b) => a.period < b.period ? -1 : 1); }
-          await putInstallment(db, inst);
+          await putInstallment(S.db, inst);
         }
       } else {
-        const rec = state.records.find(r => r.id === p.id);
+        const rec = S.state.records.find(r => r.id === p.id);
         rec.amount = amount; rec.bank = bank;
         if (newPeriod !== rec.period) {                 // переезд на факт-дату, старый слот плана убрать
           if (inst?.plan) inst.plan = inst.plan.filter(it => it.period !== rec.period);
           rec.period = newPeriod;
-          state.records.sort((a, b) => a.period < b.period ? -1 : 1);
-          if (inst) await putInstallment(db, inst);
+          S.state.records.sort((a, b) => a.period < b.period ? -1 : 1);
+          if (inst) await putInstallment(S.db, inst);
         }
-        await putRecord(db, rec);
+        await putRecord(S.db, rec);
       }
     } else if (isVirtual) {
       await materialize(period, p, { name, amount, bank });
     } else {
-      const rec = state.records.find(r => r.id === p.id);
+      const rec = S.state.records.find(r => r.id === p.id);
       Object.assign(rec, { name, amount, bank });
       const newPeriod = f.get('period');
       if (canMove && newPeriod && newPeriod !== rec.period) {
         rec.period = newPeriod;                       // перенос на другую дату
-        state.records.sort((a, b) => a.period < b.period ? -1 : 1);
+        S.state.records.sort((a, b) => a.period < b.period ? -1 : 1);
       }
-      await putRecord(db, rec);
+      await putRecord(S.db, rec);
     }
     closeModal(); render();
   };
@@ -460,8 +424,8 @@ function openPaymentForm(period, key) {
 // ─────────────────── форма дохода периода ───────────────────
 
 function openIncomeForm(period) {
-  const recs = state.records.filter(r => r.period === period && r.kind === 'income');
-  const salaryReg = state.regulars.find(r => r.kind === 'income' && r.active);
+  const recs = S.state.records.filter(r => r.period === period && r.kind === 'income');
+  const salaryReg = S.state.regulars.find(r => r.kind === 'income' && r.active);
   const rows = recs.map(r => ({ id: r.id, name: r.name, amount: r.amount }));
   if (!rows.length && salaryReg) {
     rows.push({ id: null, name: salaryReg.name, amount: salaryReg.amount, virtual: true });
@@ -513,26 +477,26 @@ function openIncomeForm(period) {
       if (!name || !Number.isFinite(amount)) continue;
       const src = rows[i];
       if (src.id) {
-        const rec = state.records.find(r => r.id === src.id);
+        const rec = S.state.records.find(r => r.id === src.id);
         Object.assign(rec, { name, amount });
-        await putRecord(db, rec);
+        await putRecord(S.db, rec);
       } else if (src.virtual) {
         if (amount !== src.amount || name !== src.name) { // материализуем только изменённый
           const rec = { id: uid('i'), period, kind: 'income', name, amount, bank: null, paid: false, regularId: salaryReg?.id };
-          state.records.push(rec);
-          await putRecord(db, rec);
+          S.state.records.push(rec);
+          await putRecord(S.db, rec);
         }
       } else {
         const rec = { id: uid('i'), period, kind: 'income', name, amount, bank: null, paid: false };
-        state.records.push(rec);
-        await putRecord(db, rec);
+        S.state.records.push(rec);
+        await putRecord(S.db, rec);
       }
     }
     for (const id of deleted) {
-      state.records = state.records.filter(r => r.id !== id);
-      await deleteRecord(db, id);
+      S.state.records = S.state.records.filter(r => r.id !== id);
+      await deleteRecord(S.db, id);
     }
-    state.records.sort((a, b) => a.period < b.period ? -1 : 1);
+    S.state.records.sort((a, b) => a.period < b.period ? -1 : 1);
     closeModal(); render();
   };
 }
@@ -540,7 +504,7 @@ function openIncomeForm(period) {
 // ───────────────────────── долги ─────────────────────────
 
 function renderDebts() {
-  const sums = installmentSummaries(state, timeline);
+  const sums = installmentSummaries(S.state, S.timeline);
   const open = sums.filter(s => !s.closed);
   const closed = sums.filter(s => s.closed);
 
@@ -586,8 +550,8 @@ function loadBadge(load) {
 }
 
 function openDebtForm(instId) {
-  const inst = instId ? state.installments.find(i => i.id === instId) : null;
-  const sums = inst ? installmentSummaries(state, timeline).find(s => s.inst.id === instId) : null;
+  const inst = instId ? S.state.installments.find(i => i.id === instId) : null;
+  const sums = inst ? installmentSummaries(S.state, S.timeline).find(s => s.inst.id === instId) : null;
   const isNew = !inst;
   const locked = !isNew && sums.closed;   // закрыта (всё оплачено) → только просмотр
   const dis = locked ? 'disabled' : '';
@@ -611,7 +575,7 @@ function openDebtForm(instId) {
   // Существующая рассрочка: все её платежи (записи + хвост) с нагрузкой периода.
   const payRows = [];
   if (!isNew) {
-    for (const day of timeline.values()) {
+    for (const day of S.timeline.values()) {
       for (const p of day.payments) {
         if (p.installmentId === inst.id) payRows.push({ ...p, period: day.period, load: day.load });
       }
@@ -911,10 +875,10 @@ function openDebtForm(instId) {
     });
   }
 
-  // Черновик существующей рассрочки → state для расчёта ленты (как при «Сохранить»):
+  // Черновик существующей рассрочки → S.state для расчёта ленты (как при «Сохранить»):
   // убираем неоплаченные записи этой рассрочки, хвост берём из draftRows (план).
   function draftStateFor() {
-    const records = state.records.filter(r => !(r.installmentId === inst.id && !r.paid));
+    const records = S.state.records.filter(r => !(r.installmentId === inst.id && !r.paid));
     const plan = draftRows.filter(r => !r.paid && r.amount > 0).map(r => ({ period: r.period, amount: r.amount }));
     const draftInst = {
       ...inst, plan,
@@ -922,8 +886,8 @@ function openDebtForm(instId) {
       perPeriod: parseMoney(form.perPeriod.value) || inst.perPeriod,
       bank: selectedBank(), name: form.name.value || inst.name,
     };
-    const installments = state.installments.map(x => x.id === inst.id ? draftInst : x);
-    return { ...state, records, installments };
+    const installments = S.state.installments.map(x => x.id === inst.id ? draftInst : x);
+    return { ...S.state, records, installments };
   }
 
   // Предпросмотр + нагрузка на каждую дату.
@@ -946,7 +910,7 @@ function openDebtForm(instId) {
     const draft = isNew
       ? { id: 'draft', name: form.name.value || 'рассрочка', total: plan.reduce((s, x) => s + x.amount, 0), perPeriod: parseMoney(form.perPeriod.value) || 0, bank: selectedBank(), plan }
       : null;
-    const draftState = isNew ? { ...state, installments: [...state.installments, draft] } : draftStateFor();
+    const draftState = isNew ? { ...S.state, installments: [...S.state.installments, draft] } : draftStateFor();
     const draftTl = buildTimeline(draftState, horizonEnd());
 
     // нагрузка на дату в строках расписания / платежей
@@ -979,7 +943,7 @@ function openDebtForm(instId) {
     const diffs = [];
     for (const day of draftTl.values()) {
       if (!planPeriods.has(day.period)) continue;
-      const before = timeline.get(day.period);
+      const before = S.timeline.get(day.period);
       if (before && day.load != null && Math.round(day.load * 100) !== Math.round((before.load ?? 0) * 100)) {
         diffs.push({ p: day.period, from: before.load ?? 0, to: day.load, zone: loadZone(day.load) });
       }
@@ -1030,8 +994,8 @@ function openDebtForm(instId) {
   const delBtn = $('#debt-delete');
   if (delBtn) delBtn.onclick = async () => {
     if (!confirm(`Удалить рассрочку «${inst.name}»? История платежей останется обычными записями.`)) return;
-    state.installments = state.installments.filter(i => i.id !== inst.id);
-    await deleteInstallment(db, inst.id);
+    S.state.installments = S.state.installments.filter(i => i.id !== inst.id);
+    await deleteInstallment(S.db, inst.id);
     closeModal(); render();
   };
 
@@ -1058,11 +1022,11 @@ function openDebtForm(instId) {
         bank: selectedBank(), firstPeriod: plan[0].period, plan,
         endPeriod: form.endPeriod.value || null,
       };
-      state.installments.push(rec);
-      await putInstallment(db, rec);
+      S.state.installments.push(rec);
+      await putInstallment(S.db, rec);
     } else {
       // применяем черновик: даты уникальны, неоплаченный хвост пересобираем как plan,
-      // оплаченные записи не трогаем (они в state.records и в plan не попадают)
+      // оплаченные записи не трогаем (они в S.state.records и в plan не попадают)
       const periods = draftRows.map(r => r.period);
       if (new Set(periods).size !== periods.length) { alert('У платежей повторяются даты — сделайте их уникальными.'); return; }
       const total = parseMoney(form.total.value) || inst.total;
@@ -1077,11 +1041,11 @@ function openDebtForm(instId) {
         if (!confirm(`Платежи (${fmtMoney(paidSum + planSum)}) больше общей суммы (${fmtMoney(total)}) на ${fmtMoney(paidSum + planSum - total)} — это переплата.\n\nСохранить как есть?`)) return;
       }
       // выбрасываем прежние неоплаченные записи рассрочки — их роль теперь играет plan
-      const dropIds = state.records.filter(r => r.installmentId === inst.id && !r.paid).map(r => r.id);
-      state.records = state.records.filter(r => !dropIds.includes(r.id));
-      for (const id of dropIds) await deleteRecord(db, id);
+      const dropIds = S.state.records.filter(r => r.installmentId === inst.id && !r.paid).map(r => r.id);
+      S.state.records = S.state.records.filter(r => !dropIds.includes(r.id));
+      for (const id of dropIds) await deleteRecord(S.db, id);
       Object.assign(inst, { name, perPeriod: per || inst.perPeriod, bank: selectedBank(), total, plan, endPeriod: form.endPeriod?.value || null });
-      await putInstallment(db, inst);
+      await putInstallment(S.db, inst);
     }
     closeModal(); render();
   };
@@ -1092,7 +1056,7 @@ function openDebtForm(instId) {
 
 function renderChart() {
   const today = todayISO();
-  const all = [...timeline.values()];
+  const all = [...S.timeline.values()];
   const from = all.findIndex(d => d.period >= today);
   const data = all.slice(Math.max(0, from - 2), Math.max(0, from - 2) + 26); // ~год вперёд
 
@@ -1144,16 +1108,16 @@ function renderChart() {
       <p class="hint">Минимум за период: <b>${fmtMoney(vals[minIdx])}</b> — ${fmtPeriodFull(data[minIdx].period)}.
       Перенос копится с января 2026 и учитывает только платежи из календаря.</p>
     </div>
-    ${monthlyLoadChart(view.chartYear)}
+    ${monthlyLoadChart(S.view.chartYear)}
     ${yearlyLoadChart()}`;
 
-  const yp = $('#chart-year-prev'); if (yp) yp.onclick = () => { view.chartYear--; renderChart(); };
-  const yn = $('#chart-year-next'); if (yn) yn.onclick = () => { view.chartYear++; renderChart(); };
+  const yp = $('#chart-year-prev'); if (yp) yp.onclick = () => { S.view.chartYear--; renderChart(); };
+  const yn = $('#chart-year-next'); if (yn) yn.onclick = () => { S.view.chartYear++; renderChart(); };
 }
 
 // 12 месячных слотов года (с пустыми, если данных нет).
 function monthsForYear(year) {
-  const byM = new Map(monthlyLoads(timeline).filter(x => x.y === year).map(x => [x.m, x]));
+  const byM = new Map(monthlyLoads(S.timeline).filter(x => x.y === year).map(x => [x.m, x]));
   const out = [];
   for (let m = 1; m <= 12; m++) {
     out.push(byM.get(m) || { y: year, m, ym: `${year}-${String(m).padStart(2, '0')}`, income: 0, expense: 0, load: null, zone: null });
@@ -1163,7 +1127,7 @@ function monthsForYear(year) {
 
 // Столбчатый график помесячной нагрузки за выбранный год + стрелки навигации.
 function monthlyLoadChart(year) {
-  const all = monthlyLoads(timeline);
+  const all = monthlyLoads(S.timeline);
   const dataYears = [...new Set(all.filter(x => x.income > 0 || x.expense > 0).map(x => x.y))];
   const minY = dataYears.length ? Math.min(...dataYears) : year;
   const maxY = dataYears.length ? Math.max(...dataYears) : year;
@@ -1223,7 +1187,7 @@ function monthlyLoadChart(year) {
 
 // Столбчатый график нагрузки по годам (26, 27 …).
 function yearlyLoadChart() {
-  const years = yearlyLoads(timeline);
+  const years = yearlyLoads(S.timeline);
   if (!years.length) return '';
 
   const W = 800, H = 240, PL = 40, PR = 16, PT = 24, PB = 40;
@@ -1272,15 +1236,15 @@ const MON3 = ['янв','фев','мар','апр','май','июн','июл','а
 // ───────────────────────── настройки ─────────────────────────
 
 async function renderSettings() {
-  const regs = state.regulars.filter(r => r.kind === 'expense');
-  const salary = state.regulars.find(r => r.kind === 'income');
+  const regs = S.state.regulars.filter(r => r.kind === 'expense');
+  const salary = S.state.regulars.find(r => r.kind === 'income');
   const schedName = { both: 'каждый период', mid: '15-е число', end: 'конец месяца' };
-  const kf = await getKeyfile(db); // Uint8Array | undefined
-  const sid = await getSyncId(db); // base64url-строка | undefined
+  const kf = await getKeyfile(S.db); // Uint8Array | undefined
+  const sid = await getSyncId(S.db); // base64url-строка | undefined
 
-  // Замок (Шаг 5): включается, когда есть мастер-ключ (vaultKey); использует тот же ключ.
-  const lock = await getLock(db);
-  const lockCard = (vaultKey || lock) ? `
+  // Замок (Шаг 5): включается, когда есть мастер-ключ (S.vaultKey); использует тот же ключ.
+  const lock = await getLock(S.db);
+  const lockCard = (S.vaultKey || lock) ? `
     <section class="card">
       <h3>Замок · Face / Touch ID</h3>
       ${lock
@@ -1290,9 +1254,9 @@ async function renderSettings() {
            </div>`
         : `<div class="keyfile-status off">Выключен — данные шифруются, но открытие без пароля.</div>
            <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
-             <button class="btn primary" id="lock-enable" ${vaultKey ? '' : 'disabled'}>Включить замок (Face/Touch ID)</button>
+             <button class="btn primary" id="lock-enable" ${S.vaultKey ? '' : 'disabled'}>Включить замок (Face/Touch ID)</button>
            </div>
-           ${vaultKey ? '<p class="hint">Один раз подтвердишь пароль → дальше вход по Face/Touch ID (пароль — запасной).</p>' : '<p class="hint">Сначала включи синхронизацию — замок использует тот же ключ.</p>'}`}
+           ${S.vaultKey ? '<p class="hint">Один раз подтвердишь пароль → дальше вход по Face/Touch ID (пароль — запасной).</p>' : '<p class="hint">Сначала включи синхронизацию — замок использует тот же ключ.</p>'}`}
     </section>` : '';
 
   $('#view-settings').innerHTML = `
@@ -1325,7 +1289,7 @@ async function renderSettings() {
     <section class="card">
       <h3>Банки</h3>
       <div class="chips" id="settings-banks">
-        ${state.settings.banks.map(b => `<span class="chip">${esc(b)} <button class="chip-x" data-rm-bank="${esc(b)}">×</button></span>`).join('')}
+        ${S.state.settings.banks.map(b => `<span class="chip">${esc(b)} <button class="chip-x" data-rm-bank="${esc(b)}">×</button></span>`).join('')}
         <button type="button" class="chip pick add" id="settings-add-bank">+ банк</button>
       </div>
     </section>
@@ -1383,7 +1347,7 @@ async function renderSettings() {
       </div>
 
       <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
-        ${(syncStatus === 'synced' || syncStatus === 'syncing')
+        ${(S.syncStatus === 'synced' || S.syncStatus === 'syncing')
           ? `<button class="btn" id="sync-off">Выключить синхронизацию</button>
              <button class="btn" id="sync-pass">Сменить пароль</button>`
           : `<button class="btn primary" id="sync-on" ${(!sid || !kf) ? 'disabled' : ''}>▶ Включить синхронизацию</button>`}
@@ -1399,7 +1363,7 @@ async function renderSettings() {
     const v = parseMoney(e.target.value);
     if (!(v > 0) || !salary) return;
     salary.amount = v;
-    await putRegular(db, salary); // без render — не теряем фокус при наборе
+    await putRegular(S.db, salary); // без render — не теряем фокус при наборе
   });
 
   $('#add-regular').onclick = () => openRegularForm(null);
@@ -1412,8 +1376,8 @@ async function renderSettings() {
   if ($('#lock-enable')) $('#lock-enable').onclick = () => openLockSetup();
   if ($('#lock-disable')) $('#lock-disable').onclick = async () => {
     if (!confirm('Выключить замок? Открытие перестанет спрашивать Face/Touch ID/пароль (данные останутся зашифрованы).')) return;
-    await clearLock(db);
-    if (vaultKey && vaultSalt) await setSyncKey(db, { key: vaultKey, salt: vaultSalt }); // вернуть «запомнить на устройстве»
+    await clearLock(S.db);
+    if (S.vaultKey && S.vaultSalt) await setSyncKey(S.db, { key: S.vaultKey, salt: S.vaultSalt }); // вернуть «запомнить на устройстве»
     alert('Замок выключен.');
     render();
   };
@@ -1422,22 +1386,22 @@ async function renderSettings() {
     if (e.target.id === 'settings-add-bank') {
       const name = prompt('Название банка');
       if (!name || !name.trim()) return;
-      if (!state.settings.banks.includes(name.trim())) {
-        state.settings.banks.push(name.trim());
-        await putSettings(db, state.settings);
+      if (!S.state.settings.banks.includes(name.trim())) {
+        S.state.settings.banks.push(name.trim());
+        await putSettings(S.db, S.state.settings);
       }
       render();
     }
     const rm = e.target.dataset.rmBank;
     if (rm && confirm(`Убрать банк «${rm}» из списка? Старые платежи не изменятся.`)) {
-      state.settings.banks = state.settings.banks.filter(b => b !== rm);
-      await putSettings(db, state.settings);
+      S.state.settings.banks = S.state.settings.banks.filter(b => b !== rm);
+      await putSettings(S.db, S.state.settings);
       render();
     }
   });
 
   $('#export-btn').onclick = () => {
-    const blob = new Blob([exportState(state)], { type: 'application/json' });
+    const blob = new Blob([exportState(S.state)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = `nagruzka-backup-${todayISO()}.json`;
@@ -1471,8 +1435,8 @@ async function renderSettings() {
 
   if ($('#kf-create')) $('#kf-create').onclick = async () => {
     const bytes = generateKeyfile();
-    await setKeyfile(db, bytes);
-    currentKeyfile = bytes;
+    await setKeyfile(S.db, bytes);
+    S.currentKeyfile = bytes;
     downloadBytes(bytes, 'nagruzka.key');
     alert('keyfile создан и скачан.\n\nПерекиньте nagruzka.key на второе устройство (AirDrop) и там нажмите «Загрузить keyfile». Этот файл — НЕ для отправки вместе с зашифрованной копией.');
     render();
@@ -1480,8 +1444,8 @@ async function renderSettings() {
   if ($('#kf-download')) $('#kf-download').onclick = () => downloadBytes(kf, 'nagruzka.key');
   if ($('#kf-clear')) $('#kf-clear').onclick = async () => {
     if (!confirm('Удалить keyfile с этого устройства? Зашифрованные с ним копии перестанут открываться здесь, пока не загрузите keyfile снова.')) return;
-    await clearKeyfile(db);
-    currentKeyfile = null;
+    await clearKeyfile(S.db);
+    S.currentKeyfile = null;
     render();
   };
   $('#kf-load').onclick = () => $('#kf-file').click();
@@ -1493,8 +1457,8 @@ async function renderSettings() {
       alert('Это не похоже на keyfile «Нагрузки» (ожидается 32 байта).');
       return;
     }
-    await setKeyfile(db, bytes);
-    currentKeyfile = bytes;
+    await setKeyfile(S.db, bytes);
+    S.currentKeyfile = bytes;
     alert('keyfile загружен ✓');
     render();
   });
@@ -1503,17 +1467,17 @@ async function renderSettings() {
   $('#enc-export-btn').onclick = async () => {
     try {
       let bytes;
-      if (syncEngine?.key && syncEngine?.salt) {
+      if (S.syncEngine?.key && S.syncEngine?.salt) {
         // один пароль: файл шифруется ключом синхронизации (keyfile для синка обязателен),
         // открывается тем же паролем приложения — отдельный пароль для файла не нужен.
-        bytes = await encryptTextWithKey(exportState(state), syncEngine.key, syncEngine.salt, !!kf);
+        bytes = await encryptTextWithKey(exportState(S.state), S.syncEngine.key, S.syncEngine.salt, !!kf);
       } else {
         // синхронизация не настроена — задаём пароль для файла вручную
         const pass = prompt('Пароль для шифрования (запиши — без него файл не открыть):');
         if (!pass) return;
         const again = prompt('Повтори пароль:');
         if (pass !== again) { alert('Пароли не совпали.'); return; }
-        bytes = await encryptText(exportState(state), pass, kf);
+        bytes = await encryptText(exportState(S.state), pass, kf);
       }
       downloadBytes(bytes, `nagruzka-${todayISO()}.nz`);
       alert('Зашифрованная копия сохранена ✓' + (kf ? '\n(с keyfile)' : '\n(без keyfile — только пароль)'));
@@ -1555,7 +1519,7 @@ async function renderSettings() {
         'Импорт ЗАМЕНИТ все текущие данные. Перед заменой скачается бэкап текущего состояния. Продолжить?'
       );
       if (!ok) return;
-      downloadBytes(exportState(state), `nagruzka-before-import-${todayISO()}.json`, 'application/json');
+      downloadBytes(exportState(S.state), `nagruzka-before-import-${todayISO()}.json`, 'application/json');
       await adoptStateJSON(json);
       render();
       markDirty(); // если синк включён — выгрузить импортированные данные на сервер
@@ -1568,11 +1532,11 @@ async function renderSettings() {
   // --- синхронизация (этап 4b) ---
   if (syncConfigured()) {
     updateSyncStatusUI();
-    if (!syncEngine) syncEngine = createSyncEngine();
+    if (!S.syncEngine) S.syncEngine = createSyncEngine();
 
     if ($('#sid-create')) $('#sid-create').onclick = async () => {
       const id = generateSyncId();
-      await setSyncId(db, id);
+      await setSyncId(S.db, id);
       alert('Sync ID создан.\n\nНа этом устройстве нажми «Скопировать», на втором — «Вставить». Через Universal Clipboard скопированное на Маке вставляется прямо на айфоне.');
       render();
     };
@@ -1585,21 +1549,21 @@ async function renderSettings() {
       if (!txt) return;
       if (!isValidSyncId(txt)) { alert('Это не похоже на Sync ID «Нагрузки».'); return; }
       // смена Sync ID = другая ячейка: возвращаем данные в плейнтекст, сбрасываем ключ/сейф
-      if (vaultKey) { await saveLegacy(db, state); await clearVault(db); vaultKey = null; }
-      if (syncEngine) { syncEngine.stop(); syncEngine.key = null; }
-      syncStatus = 'off';
-      await clearSyncKey(db);
-      await setSyncId(db, txt);
+      if (S.vaultKey) { await saveLegacy(S.db, S.state); await clearVault(S.db); S.vaultKey = null; }
+      if (S.syncEngine) { S.syncEngine.stop(); S.syncEngine.key = null; }
+      S.syncStatus = 'off';
+      await clearSyncKey(S.db);
+      await setSyncId(S.db, txt);
       alert('Sync ID сохранён ✓ Теперь включи синхронизацию.');
       render();
     };
     if ($('#sid-clear')) $('#sid-clear').onclick = async () => {
       if (!confirm('Удалить Sync ID с этого устройства? Синхронизация здесь отключится.')) return;
-      if (vaultKey) { await saveLegacy(db, state); await clearVault(db); vaultKey = null; } // вернуть в плейнтекст
-      if (syncEngine) { syncEngine.stop(); syncEngine.key = null; }
-      syncStatus = 'off';
-      await clearSyncId(db);
-      await clearSyncKey(db);
+      if (S.vaultKey) { await saveLegacy(S.db, S.state); await clearVault(S.db); S.vaultKey = null; } // вернуть в плейнтекст
+      if (S.syncEngine) { S.syncEngine.stop(); S.syncEngine.key = null; }
+      S.syncStatus = 'off';
+      await clearSyncId(S.db);
+      await clearSyncKey(S.db);
       render();
     };
 
@@ -1607,26 +1571,26 @@ async function renderSettings() {
       const pass = prompt('Пароль синхронизации (запомнится на этом устройстве; сам пароль не хранится):');
       if (!pass) return;
       try {
-        syncStatus = 'syncing'; updateSyncStatusUI();
-        await syncEngine.unlock(sid, pass);   // деривация ключа + первая сверка с сервером
+        S.syncStatus = 'syncing'; updateSyncStatusUI();
+        await S.syncEngine.unlock(sid, pass);   // деривация ключа + первая сверка с сервером
         // «Запомнить на устройстве» — только БЕЗ замка: при замке K не должен лежать готовым.
-        if (!(await getLock(db))) await setSyncKey(db, { key: syncEngine.key, salt: syncEngine.salt });
-        vaultKey = syncEngine.key;             // включаем локальное шифрование тем же ключом
-        vaultSalt = syncEngine.salt;
-        const firstVault = !(await hasVault(db));
-        await saveVault(db, vaultKey, state);  // сейф всегда перешифрован ТЕКУЩИМ ключом
-        if (firstVault) await clearPlaintextStores(db); // первая настройка → плейнтекст убрать
-        syncEngine.start();                    // фоновый опрос
+        if (!(await getLock(S.db))) await setSyncKey(S.db, { key: S.syncEngine.key, salt: S.syncEngine.salt });
+        S.vaultKey = S.syncEngine.key;             // включаем локальное шифрование тем же ключом
+        S.vaultSalt = S.syncEngine.salt;
+        const firstVault = !(await hasVault(S.db));
+        await saveVault(S.db, S.vaultKey, S.state);  // сейф всегда перешифрован ТЕКУЩИМ ключом
+        if (firstVault) await clearPlaintextStores(S.db); // первая настройка → плейнтекст убрать
+        S.syncEngine.start();                    // фоновый опрос
         render();
       } catch (err) {
-        syncStatus = 'off';
+        S.syncStatus = 'off';
         alert(err.message || 'Не удалось включить синхронизацию');
         render();
       }
     };
     if ($('#sync-off')) $('#sync-off').onclick = async () => {
-      syncEngine.stop();        // только остановить обмен; ключ и сейф оставляем —
-      syncStatus = 'off';       // локальные данные должны читаться без пароля (замок — Шаг 5)
+      S.syncEngine.stop();        // только остановить обмен; ключ и сейф оставляем —
+      S.syncStatus = 'off';       // локальные данные должны читаться без пароля (замок — Шаг 5)
       render();
     };
     if ($('#sync-pass')) $('#sync-pass').onclick = async () => {
@@ -1636,22 +1600,22 @@ async function renderSettings() {
       const p2 = prompt('Повтори новый пароль:');
       if (p1 !== p2) { alert('Пароли не совпали.'); return; }
       try {
-        await syncEngine.changePassword(p1);                               // перешифровать + выложить
-        vaultKey = syncEngine.key;                                          // и пересохранить сейф новым ключом
-        if (await hasVault(db)) await saveVault(db, vaultKey, state);
+        await S.syncEngine.changePassword(p1);                               // перешифровать + выложить
+        S.vaultKey = S.syncEngine.key;                                          // и пересохранить сейф новым ключом
+        if (await hasVault(S.db)) await saveVault(S.db, S.vaultKey, S.state);
         // При активном замке кэш-ключ НЕ восстанавливаем (иначе K снова лежит в готовом
         // виде и гейт обесценен), а биометрия заворачивает СТАРЫЙ ключ → сбрасываем её,
         // иначе на старте она развернёт ключ, которым сейф уже не открыть.
-        const lock = await getLock(db);
+        const lock = await getLock(S.db);
         if (lock) {
           const hadBio = !!lock.bio;
-          await setLock(db, { salt: lock.salt, bio: null });
-          await clearSyncKey(db); // старый кэш-ключ (если остался) больше не нужен и не должен лежать
+          await setLock(S.db, { salt: lock.salt, bio: null });
+          await clearSyncKey(S.db); // старый кэш-ключ (если остался) больше не нужен и не должен лежать
           alert('Пароль синхронизации изменён ✓\n\nЗамок теперь открывается НОВЫМ паролем.'
             + (hadBio ? '\nFace/Touch ID сброшен (он был привязан к старому паролю) — включи заново: Настройки → «Выключить замок» → «Включить замок».' : '')
             + '\n\nНа ДРУГИХ устройствах синк покажет «не удалось расшифровать» — там нажми «Выключить» и снова «Включить» уже с новым паролем.');
         } else {
-          await setSyncKey(db, { key: syncEngine.key, salt: syncEngine.salt }); // запомнить новый ключ
+          await setSyncKey(S.db, { key: S.syncEngine.key, salt: S.syncEngine.salt }); // запомнить новый ключ
           alert('Пароль синхронизации изменён ✓\n\nНа ДРУГИХ устройствах синк покажет «не удалось расшифровать» — там нажми «Выключить» и снова «Включить» уже с новым паролем.');
         }
         render();
@@ -1663,7 +1627,7 @@ async function renderSettings() {
 }
 
 function openRegularForm(regId) {
-  const reg = regId ? state.regulars.find(r => r.id === regId) : null;
+  const reg = regId ? S.state.regulars.find(r => r.id === regId) : null;
   const isNew = !reg;
 
   openModal(`
@@ -1704,8 +1668,8 @@ function openRegularForm(regId) {
   const delBtn = $('#reg-delete');
   if (delBtn) delBtn.onclick = async () => {
     if (!confirm(`Удалить «${reg.name}»? История останется, будущие периоды очистятся.`)) return;
-    state.regulars = state.regulars.filter(r => r.id !== reg.id);
-    await deleteRegular(db, reg.id);
+    S.state.regulars = S.state.regulars.filter(r => r.id !== reg.id);
+    await deleteRegular(S.db, reg.id);
     closeModal(); render();
   };
 
@@ -1725,11 +1689,11 @@ function openRegularForm(regId) {
       const since = generatePeriods(todayISO().slice(0, 7) + '-01', horizonEnd())
         .find(p => p >= todayISO());
       const rec = { id: uid('reg'), kind: 'expense', since, ...data };
-      state.regulars.push(rec);
-      await putRegular(db, rec);
+      S.state.regulars.push(rec);
+      await putRegular(S.db, rec);
     } else {
       Object.assign(reg, data);
-      await putRegular(db, reg);
+      await putRegular(S.db, reg);
     }
     closeModal(); render();
   };
@@ -1738,14 +1702,14 @@ function openRegularForm(regId) {
 // ───────────────────────── запуск ─────────────────────────
 
 function shiftMonth(delta) {
-  view.m += delta;
-  if (view.m < 1) { view.m = 12; view.y--; }
-  if (view.m > 12) { view.m = 1; view.y++; }
+  S.view.m += delta;
+  if (S.view.m < 1) { S.view.m = 12; S.view.y--; }
+  if (S.view.m > 12) { S.view.m = 1; S.view.y++; }
   render();
 }
 // стрелки в «Периодах»: в режиме прогноза листают ГОД, иначе — месяц
 function periodsNav(delta) {
-  if (isForecast()) { view.y += delta; render(); }
+  if (isForecast()) { S.view.y += delta; render(); }
   else shiftMonth(delta);
 }
 
@@ -1758,20 +1722,20 @@ function updateSyncStatusUI() {
     offline: ['⚠ сервер недоступен', 'warn'], conflict: ['⚠ был конфликт, взято свежее', 'warn'],
     error: ['⚠ ошибка', 'warn'],
   };
-  const [text, cls] = map[syncStatus] || ['—', ''];
+  const [text, cls] = map[S.syncStatus] || ['—', ''];
   el.textContent = text;
   el.className = 'keyfile-status ' + cls;
 }
 
 function createSyncEngine() {
   return new SyncEngine({
-    getStateJSON: () => exportState(state),
+    getStateJSON: () => exportState(S.state),
     applyStateJSON: async (json) => {
       await adoptStateJSON(json);          // заменить состояние и сохранить (сейф/плейнтекст), без эха
       render();
     },
-    getKeyfile: () => currentKeyfile || null,
-    onStatus: (s) => { syncStatus = s; updateSyncStatusUI(); updateConnBanner(s); },
+    getKeyfile: () => S.currentKeyfile || null,
+    onStatus: (s) => { S.syncStatus = s; updateSyncStatusUI(); updateConnBanner(s); },
     onSaved: () => showToast('ok', '✓ Сохранено и синхронизировано', 2000), // на каждую правку
   });
 }
@@ -1805,8 +1769,8 @@ function updateConnBanner(s) {
 // кнопки (create() как первый вызов на свежем жесте при сфокусированном документе — иначе iOS
 // Safari бросает «document is not focused»). rawK держится в замыкании между шагами.
 async function openLockSetup() {
-  const salt = vaultSalt || (await getSyncKey(db))?.salt;
-  if (!vaultKey || !salt) { alert('Сначала включи синхронизацию — замок использует тот же ключ.'); return; }
+  const salt = S.vaultSalt || (await getSyncKey(S.db))?.salt;
+  if (!S.vaultKey || !salt) { alert('Сначала включи синхронизацию — замок использует тот же ключ.'); return; }
   openModal(`
     <h3>Включить замок</h3>
     <p class="hint">Подтверди пароль (тот же, что синхронизация).</p>
@@ -1824,13 +1788,13 @@ async function openLockSetup() {
     err('Проверяю…');
     let rawK;
     try {
-      rawK = await deriveKeyRaw(pass, currentKeyfile, salt);
-      if (await hasVault(db)) await loadVault(db, await importAesKey(rawK)); // проверка пароля
+      rawK = await deriveKeyRaw(pass, S.currentKeyfile, salt);
+      if (await hasVault(S.db)) await loadVault(S.db, await importAesKey(rawK)); // проверка пароля
     } catch { err('Неверный пароль или keyfile.'); return; }
 
     const finish = async (bio) => {
-      await setLock(db, { salt, bio });
-      await clearSyncKey(db); // убрать свободно-используемый кэш → гейт на следующем старте
+      await setLock(S.db, { salt, bio });
+      await clearSyncKey(S.db); // убрать свободно-используемый кэш → гейт на следующем старте
       closeModal();
       alert('Замок включён ✓ При следующем открытии приложение спросит ' + (bio ? 'Face/Touch ID (или пароль).' : 'пароль.'));
       render();
@@ -1912,11 +1876,11 @@ function runLockGate(lock) {
       // если пароль меняли (биометрия заворачивает старый ключ) — повторять Face ID
       // бессмысленно, сбрасываем устаревшую биометрию и уводим на пароль.
       try {
-        if (await hasVault(db)) await loadVault(db, key);
+        if (await hasVault(S.db)) await loadVault(S.db, key);
         done(key);
       } catch (e) {
         setStatus('');
-        await setLock(db, { salt: lock.salt, bio: null }).catch(() => {});
+        await setLock(S.db, { salt: lock.salt, bio: null }).catch(() => {});
         setErr('Ключ Face/Touch ID устарел (менялся пароль?) — войди по паролю и включи замок заново.');
         revealPassword();
       }
@@ -1928,8 +1892,8 @@ function runLockGate(lock) {
       if (!pass) return;
       setErr(''); setStatus('Проверяю…');
       try {
-        const key = await importAesKey(await deriveKeyRaw(pass, currentKeyfile, lock.salt));
-        if (await hasVault(db)) await loadVault(db, key); // бросит при неверном пароле/keyfile
+        const key = await importAesKey(await deriveKeyRaw(pass, S.currentKeyfile, lock.salt));
+        if (await hasVault(S.db)) await loadVault(S.db, key); // бросит при неверном пароле/keyfile
         done(key);
       } catch (e) {
         setStatus(''); setErr('Неверный пароль или keyfile.');
@@ -1942,42 +1906,42 @@ function runLockGate(lock) {
 }
 
 async function main() {
-  db = await initStore(SEED);
-  currentKeyfile = await getKeyfile(db);
-  const lock = await getLock(db);
+  S.db = await initStore(SEED);
+  S.currentKeyfile = await getKeyfile(S.db);
+  const lock = await getLock(S.db);
 
   if (lock) {
     // ЗАМОК (Шаг 5): K открывается биометрией/паролём (overlay блокирует до успеха).
-    vaultKey = await runLockGate(lock);
-    vaultSalt = lock.salt;
+    S.vaultKey = await runLockGate(lock);
+    S.vaultSalt = lock.salt;
   } else {
     // Путь 4b: свободно-используемый кэш-ключ «запомнить на устройстве».
-    const saved = await getSyncKey(db);
-    if (saved?.key) { vaultKey = saved.key; vaultSalt = saved.salt; }
+    const saved = await getSyncKey(S.db);
+    if (saved?.key) { S.vaultKey = saved.key; S.vaultSalt = saved.salt; }
   }
 
   // Загрузка состояния: есть ключ → зашифрованный сейф; иначе плейнтекст (или seed).
-  if (vaultKey && await hasVault(db)) {
-    state = await loadVault(db, vaultKey);
+  if (S.vaultKey && await hasVault(S.db)) {
+    S.state = await loadVault(S.db, S.vaultKey);
   } else {
-    state = await loadState(db);
-    if (vaultKey && !lock) {                    // 4b-миграция плейнтекст→сейф (вне замка-гейта)
-      await saveVault(db, vaultKey, state);
-      if (await loadVault(db, vaultKey)) await clearPlaintextStores(db); // чистим только после успешного чтения
+    S.state = await loadState(S.db);
+    if (S.vaultKey && !lock) {                    // 4b-миграция плейнтекст→сейф (вне замка-гейта)
+      await saveVault(S.db, S.vaultKey, S.state);
+      if (await loadVault(S.db, S.vaultKey)) await clearPlaintextStores(S.db); // чистим только после успешного чтения
     }
   }
 
   if (syncConfigured()) {
-    syncEngine = createSyncEngine();
-    const sid = await getSyncId(db);
-    if (sid && vaultKey) {
-      await syncEngine.prepare(sid);   // вычислить id чанка/меты из Sync ID
-      syncEngine.key = vaultKey;
-      syncEngine.salt = vaultSalt;
-      syncEngine.version = 0;      // подтянем актуальную версию из сервера ниже
-      syncStatus = 'synced';
-      syncEngine.start();
-      syncEngine.pullAndApply();
+    S.syncEngine = createSyncEngine();
+    const sid = await getSyncId(S.db);
+    if (sid && S.vaultKey) {
+      await S.syncEngine.prepare(sid);   // вычислить id чанка/меты из Sync ID
+      S.syncEngine.key = S.vaultKey;
+      S.syncEngine.salt = S.vaultSalt;
+      S.syncEngine.version = 0;      // подтянем актуальную версию из сервера ниже
+      S.syncStatus = 'synced';
+      S.syncEngine.start();
+      S.syncEngine.pullAndApply();
     }
   }
   $('#prev-month').addEventListener('click', () => periodsNav(-1));
@@ -1988,14 +1952,14 @@ async function main() {
   const clampZoom = z => Math.min(1.5, Math.max(0.6, Math.round(z * 10) / 10));
   function applyZoom(z) {
     z = clampZoom(z);
-    zoomLevel = z;
+    S.zoomLevel = z;
     $$('.view').forEach(v => { v.style.zoom = z; });
     const el = $('#zoom-val'); if (el) el.textContent = Math.round(z * 100) + '%';
     localStorage.setItem('zoom', String(z));
     return z;
   }
   // меняем масштаб и, если открыты «Периоды», перерисовываем (на пороге 150% меняется раскладка)
-  const setZoom = z => { zoom = applyZoom(z); if (view.tab === 'periods') renderPeriods(); };
+  const setZoom = z => { zoom = applyZoom(z); if (S.view.tab === 'periods') renderPeriods(); };
   let zoom = applyZoom(parseFloat(localStorage.getItem('zoom')) || 1);
   $('#zoom-in').onclick = () => setZoom(zoom + 0.1);
   $('#zoom-out').onclick = () => setZoom(zoom - 0.1);
@@ -2007,12 +1971,12 @@ async function main() {
     else if (e.key === '-' || e.key === '_') { e.preventDefault(); setZoom(zoom - 0.1); }
     else if (e.key === '0')                  { e.preventDefault(); setZoom(1); }
   });
-  $$('.tab').forEach(t => t.addEventListener('click', () => { view.tab = t.dataset.tab; render(); }));
+  $$('.tab').forEach(t => t.addEventListener('click', () => { S.view.tab = t.dataset.tab; render(); }));
   $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
   $('#modal-close').onclick = closeModal;
   // пересечение порога ширины (узкий ↔ широкий) — перерисовать «Периоды» в нужном режиме
   window.matchMedia('(min-width: 1180px)').addEventListener('change', () => {
-    if (view.tab === 'periods') renderPeriods();
+    if (S.view.tab === 'periods') renderPeriods();
   });
   wireMoneyInputs(document);
   render();
