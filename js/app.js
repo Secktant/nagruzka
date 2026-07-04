@@ -9,7 +9,7 @@ import {
 } from './db.js';
 import {
   buildTimeline, installmentSummaries, generatePeriods, monthlyLoads, yearlyLoads,
-  fmtMoney, groupThousands, fmtPeriod, fmtMonth, loadZone,
+  fmtMoney, fmtPeriod, fmtMonth, loadZone,
 } from './engine.js';
 import { generateKeyfile, encryptText, encryptTextWithKey, decryptToText, inspect, deriveKeyRaw, importAesKey } from './crypto.js';
 import { SyncEngine, isConfigured as syncConfigured, generateSyncId, isValidSyncId, deriveChunkId, CHUNK_NAGRUZKA } from './sync.js';

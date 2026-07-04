@@ -232,4 +232,4 @@ export class SyncEngine {
   }
 }
 
-export const _b64 = b64, _b64url = b64url; // экспорт для тестов
+export const _b64url = b64url; // экспорт для тестов

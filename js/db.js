@@ -118,14 +118,6 @@ export const getLock = (db) => getKV(db, 'lock');
 export const setLock = (db, obj) => tx(db, 'kv', 'readwrite', s => s.put(obj, 'lock'));
 export const clearLock = (db) => tx(db, 'kv', 'readwrite', s => s.delete('lock'));
 
-export const putRecord = (db, r) => tx(db, 'records', 'readwrite', s => s.put(r));
-export const deleteRecord = (db, id) => tx(db, 'records', 'readwrite', s => s.delete(id));
-export const putRegular = (db, r) => tx(db, 'regulars', 'readwrite', s => s.put(r));
-export const deleteRegular = (db, id) => tx(db, 'regulars', 'readwrite', s => s.delete(id));
-export const putInstallment = (db, r) => tx(db, 'installments', 'readwrite', s => s.put(r));
-export const deleteInstallment = (db, id) => tx(db, 'installments', 'readwrite', s => s.delete(id));
-export const putSettings = (db, settings) => tx(db, 'kv', 'readwrite', s => s.put(settings, 'settings'));
-
 // keyfile — второй фактор шифрования. Хранится в kv как Uint8Array, в экспорт НЕ попадает.
 export const getKeyfile = (db) => getKV(db, 'keyfile');
 export const setKeyfile = (db, bytes) => tx(db, 'kv', 'readwrite', s => s.put(bytes, 'keyfile'));
@@ -150,12 +142,4 @@ export function exportState(state) {
     installments: state.installments,
     records: state.records,
   }, null, 2);
-}
-
-export async function importState(db, json) {
-  const data = JSON.parse(json);
-  if (data.app !== 'nagruzka' || !data.settings || !Array.isArray(data.records)) {
-    throw new Error('Это не похоже на резервную копию «Нагрузки»');
-  }
-  await writeAll(db, data);
 }

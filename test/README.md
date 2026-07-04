@@ -34,7 +34,7 @@ Argon2 поднимается из `js/vendor/argon2.umd.min.js` (как в бр
 **Playwright поверх preview** (реальный браузер, реальная крипта/WebAuthn) либо
 `fake-indexeddb` + `jsdom` — но крипту при этом **не мокать**.
 
-- `js/db.js` — операции IndexedDB, `importState`, `saveVault`/`loadVault`
+- `js/db.js` — операции IndexedDB, `saveVault`/`loadVault`
 - `js/sync.js` — `SyncEngine` (сеть + разрешение конфликта версий)
 - `js/lock.js` — замок Face/Touch ID (WebAuthn PRF)
 - `js/app.js` — рендер и обработчики
