@@ -28,6 +28,7 @@ async function prfAssert(rawId) {
     // прямо к платформенному аутентификатору (Touch/Face ID), минуя шторку выбора passkey.
     allowCredentials: [{ id: rawId, type: 'public-key', transports: ['internal'] }],
     userVerification: 'required',
+    hints: ['client-device'],   // Safari 18+: ключ на ЭТОМ устройстве → без «Другие параметры» (кросс-девайс)
     extensions: { prf: { eval: { first: PRF_SALT } } },
     timeout: 60000,
   }});
@@ -48,6 +49,7 @@ export async function registerBiometric(rawK) {
       // credentialId мы храним сами. Цель — проще системная шторка. PRF работает и так.
       authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged',
     },
+    hints: ['client-device'],   // регистрируем как ключ ЭТОГО устройства (без кросс-девайс)
     extensions: { prf: { eval: { first: PRF_SALT } } },
     timeout: 60000,
   }});
