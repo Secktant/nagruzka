@@ -15,6 +15,7 @@ import { generateKeyfile, encryptText, encryptTextWithKey, decryptToText, inspec
 import { SyncEngine, isConfigured as syncConfigured, generateSyncId, isValidSyncId, deriveChunkId, CHUNK_NAGRUZKA } from './sync.js';
 import { webauthnSupported, registerBiometric, unlockBiometric } from './lock.js';
 import { todayISO, horizonEnd, fmtPeriodFull, addDays, payKey, payTypeMark, plural } from './format.js';
+import { $, $$, esc, uid, parseMoney, fmtNumEditor, moneyInput, wireMoneyInputs, openModal, closeModal } from './dom.js';
 
 // Персистентность (этап 4b): всё состояние сохраняется одним снимком через persist().
 // Есть ключ (синк настроен) → зашифрованный сейф (kv 'vault'); нет → плейнтекст-стора.
@@ -60,60 +61,6 @@ let zoomLevel = 1; // текущий масштаб (для развилки р�
 // (скролл, навигация по годам); иначе (телефон ИЛИ 150%) — один месяц, навигация по месяцам.
 const isWide = () => window.matchMedia('(min-width: 1180px)').matches;
 const isForecast = () => isWide() && zoomLevel < 1.5;
-
-const $ = sel => document.querySelector(sel);
-const $$ = sel => [...document.querySelectorAll(sel)];
-const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-const uid = p => `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-
-// ── денежный ввод: type=text с пробелами + свои стрелки ±1 ₽ ──
-const parseMoney = v => {
-  const n = Number(String(v ?? '').replace(/\s/g, '').replace('−', '-').replace(',', '.'));
-  return Number.isFinite(n) ? n : NaN;
-};
-function fmtNumEditor(n) {
-  if (n === '' || n == null || (typeof n === 'number' && isNaN(n))) return '';
-  const num = typeof n === 'number' ? n : parseMoney(n);
-  if (isNaN(num)) return '';
-  const neg = num < 0, abs = Math.abs(num);
-  const int = Math.trunc(abs), frac = Math.round((abs - int) * 100);
-  let s = String(int);
-  if (int >= 10000) s = s.replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-  if (frac) s += ',' + String(frac).padStart(2, '0');
-  return (neg ? '-' : '') + s;
-}
-// name|value|extra-attrs(класс/placeholder/aria) → разметка поля со стрелками
-function moneyInput(name, value, attrs = '') {
-  const v = value === '' || value == null ? '' : fmtNumEditor(value);
-  return `<span class="num">
-    <input type="text" inputmode="decimal" class="num-field" ${name ? `name="${name}"` : ''} value="${v}" ${attrs}>
-    <span class="num-steps">
-      <button type="button" class="num-step up" tabindex="-1" aria-label="+1 ₽">▲</button>
-      <button type="button" class="num-step down" tabindex="-1" aria-label="−1 ₽">▼</button>
-    </span>
-  </span>`;
-}
-// Глобальная обвязка для всех money-полей внутри #modal (вешается один раз).
-function wireMoneyInputs(root) {
-  root.addEventListener('focusin', e => {
-    if (e.target.classList?.contains('num-field')) {
-      e.target.value = String(e.target.value).replace(/\s/g, '');
-    }
-  });
-  root.addEventListener('focusout', e => {
-    if (e.target.classList?.contains('num-field') && e.target.value !== '') {
-      e.target.value = fmtNumEditor(parseMoney(e.target.value));
-    }
-  });
-  root.addEventListener('click', e => {
-    const step = e.target.closest('.num-step');
-    if (!step) return;
-    const field = step.closest('.num').querySelector('.num-field');
-    const cur = parseMoney(field.value) || 0;
-    field.value = fmtNumEditor(cur + (step.classList.contains('up') ? 1 : -1));
-    field.dispatchEvent(new Event('input', { bubbles: true }));
-  });
-}
 
 // ───────────────────────── рендер ─────────────────────────
 
@@ -323,12 +270,6 @@ async function materialize(period, p, overrides = {}) {
 }
 
 // ───────────────────────── модалка ─────────────────────────
-
-function openModal(html) {
-  $('#modal-body').innerHTML = html;
-  $('#modal').showModal();
-}
-function closeModal() { $('#modal').close(); }
 
 function bankChipsHTML(selected) {
   const chips = state.settings.banks.map(b => `
