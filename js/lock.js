@@ -44,7 +44,9 @@ export async function registerBiometric(rawK) {
     user: { id: crypto.getRandomValues(new Uint8Array(16)), name: 'nagruzka', displayName: 'Нагрузка' },
     pubKeyCredParams: [{ type: 'public-key', alg: -7 }, { type: 'public-key', alg: -257 }],
     authenticatorSelection: {
-      authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'preferred',
+      // discouraged → НЕ discoverable: ключ device-bound (не уезжает в iCloud «Пароли»),
+      // credentialId мы храним сами. Цель — проще системная шторка. PRF работает и так.
+      authenticatorAttachment: 'platform', userVerification: 'required', residentKey: 'discouraged',
     },
     extensions: { prf: { eval: { first: PRF_SALT } } },
     timeout: 60000,
