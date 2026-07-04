@@ -14,6 +14,7 @@ import {
 import { generateKeyfile, encryptText, encryptTextWithKey, decryptToText, inspect, deriveKeyRaw, importAesKey } from './crypto.js';
 import { SyncEngine, isConfigured as syncConfigured, generateSyncId, isValidSyncId, deriveChunkId, CHUNK_NAGRUZKA } from './sync.js';
 import { webauthnSupported, registerBiometric, unlockBiometric } from './lock.js';
+import { todayISO, horizonEnd, fmtPeriodFull, addDays, payKey, payTypeMark, plural } from './format.js';
 
 // Персистентность (этап 4b): всё состояние сохраняется одним снимком через persist().
 // Есть ключ (синк настроен) → зашифрованный сейф (kv 'vault'); нет → плейнтекст-стора.
@@ -59,8 +60,6 @@ let zoomLevel = 1; // текущий масштаб (для развилки р�
 // (скролл, навигация по годам); иначе (телефон ИЛИ 150%) — один месяц, навигация по месяцам.
 const isWide = () => window.matchMedia('(min-width: 1180px)').matches;
 const isForecast = () => isWide() && zoomLevel < 1.5;
-
-const HORIZON_MONTHS = 18;
 
 const $ = sel => document.querySelector(sel);
 const $$ = sel => [...document.querySelectorAll(sel)];
@@ -114,19 +113,6 @@ function wireMoneyInputs(root) {
     field.value = fmtNumEditor(cur + (step.classList.contains('up') ? 1 : -1));
     field.dispatchEvent(new Event('input', { bubbles: true }));
   });
-}
-
-function todayISO() {
-  return `${TODAY.getFullYear()}-${String(TODAY.getMonth() + 1).padStart(2, '0')}-${String(TODAY.getDate()).padStart(2, '0')}`;
-}
-function horizonEnd() {
-  // последний день месяца через HORIZON_MONTHS — чтобы последний месяц был ПОЛНЫМ
-  // (иначе обрывались на 28-м и терялся период конца месяца, 31-е → месяц неполный в графике)
-  const d = new Date(TODAY.getFullYear(), TODAY.getMonth() + HORIZON_MONTHS + 1, 0);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-}
-function fmtPeriodFull(p) {
-  return `${fmtPeriod(p)} ${p.slice(0, 4)}`;
 }
 
 // ───────────────────────── рендер ─────────────────────────
@@ -277,26 +263,6 @@ function periodCard(d, today) {
     <div class="payments">${payments}</div>
     ${chips ? `<div class="chips">${chips}</div>` : ''}
   </section>`;
-}
-
-function addDays(iso, days) {
-  const d = new Date(iso + 'T00:00:00');
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
-}
-
-function payKey(p) {
-  return p.virtual ? `v|${p.regularId || p.installmentId}` : `r|${p.id}`;
-}
-
-// Тип платежа → иконка-маркер (постоянный / из рассрочки / разовый / «мне должны»)
-function payTypeMark(p) {
-  const owed = !p.regularId && !p.installmentId && p.amount < 0;  // дебиторка: разовый минус
-  const m = owed ? ['owed', '🤝', 'Вам должны (вернётся)']
-    : p.regularId ? ['reg', '🔁', 'Постоянный платёж']
-    : p.installmentId ? ['inst', '💳', 'Платёж по рассрочке']
-    : ['once', '💵', 'Разовый платёж'];
-  return `<span class="pay-type ${m[0]}" title="${m[2]}" aria-label="${m[2]}">${m[1]}</span>`;
 }
 
 function paymentRow(period, p) {
@@ -1180,12 +1146,6 @@ function openDebtForm(instId) {
   };
 }
 
-function plural(n, one, few, many) {
-  const m10 = n % 10, m100 = n % 100;
-  if (m10 === 1 && m100 !== 11) return one;
-  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few;
-  return many;
-}
 
 // ───────────────────────── график ─────────────────────────
 
