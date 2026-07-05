@@ -13,6 +13,7 @@ const ASSETS = [
   'js/store.js',
   'js/render.js',
   'js/chips.js',
+  'js/sync-ui.js',
   'js/views/chart.js',
   'js/views/debts.js',
   'js/views/periods.js',
