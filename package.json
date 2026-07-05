@@ -3,6 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "check:assets": "node tools/check-assets.mjs",
+    "smoke": "node tools/smoke.mjs",
+    "ci": "npm test && npm run check:assets && npm run smoke"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.0"
   }
 }

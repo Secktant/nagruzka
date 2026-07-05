@@ -1,0 +1,54 @@
+name: CI + Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Права нужны деплою на Pages (id-token — для actions/deploy-pages).
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    name: Тесты + проверки + boot-smoke
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install
+      - name: Установить Chromium для Playwright
+        run: npx playwright install --with-deps chromium
+      - name: Юнит-тесты (движок, крипта, синк, форматтеры)
+        run: node --test
+      - name: Полнота ASSETS сервис-воркера
+        run: node tools/check-assets.mjs
+      - name: Boot-smoke в реальном браузере
+        run: node tools/smoke.mjs
+
+  deploy:
+    name: Публикация на GitHub Pages
+    needs: ci
+    # деплоим только при пуше в main; на PR и других ветках гоняется лишь ci
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: '.'
+      - id: deployment
+        uses: actions/deploy-pages@v4

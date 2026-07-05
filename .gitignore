@@ -1,6 +1,11 @@
 # macOS
 .DS_Store
 
+# CI / dev-инструменты (Playwright для boot-smoke) — не в репозиторий и не в прод
+node_modules/
+test-results/
+playwright-report/
+
 # никаких личных данных/бэкапов в публичном репозитории
 *backup*.json
 my-data*.json
