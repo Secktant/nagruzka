@@ -17,6 +17,7 @@ const ASSETS = [
   'js/views/chart.js',
   'js/views/debts.js',
   'js/views/periods.js',
+  'js/views/settings.js',
   'js/engine.js',
   'js/db.js',
   'js/seed.js',
