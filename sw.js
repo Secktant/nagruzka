@@ -15,6 +15,7 @@ const ASSETS = [
   'js/chips.js',
   'js/views/chart.js',
   'js/views/debts.js',
+  'js/views/periods.js',
   'js/engine.js',
   'js/db.js',
   'js/seed.js',
