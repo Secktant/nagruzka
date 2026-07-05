@@ -6,17 +6,22 @@ import { fmtPeriod } from './engine.js';
 // Горизонт ленты: на сколько месяцев вперёд строим периоды.
 export const HORIZON_MONTHS = 18;
 
+// Единый источник «сегодня»: снимок на момент запуска приложения. Всё, что
+// показывает/считает «текущее» (подсветка периода, горизонт, S.view), живёт этой
+// датой до перезагрузки — иначе через полночь части UI разъезжаются между собой.
+export const TODAY = new Date();
+
 // Дата → 'YYYY-MM-DD' по ЛОКАЛЬНОМУ времени (периоды живут в локальной зоне пользователя).
 const isoLocal = (d) =>
   `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
-export function todayISO(today = new Date()) {
+export function todayISO(today = TODAY) {
   return isoLocal(today);
 }
 
 // Последний день месяца через HORIZON_MONTHS — чтобы последний месяц был ПОЛНЫМ
 // (иначе обрывались на 28-м и терялся период конца месяца, 31-е → месяц неполный в графике).
-export function horizonEnd(today = new Date(), months = HORIZON_MONTHS) {
+export function horizonEnd(today = TODAY, months = HORIZON_MONTHS) {
   const d = new Date(today.getFullYear(), today.getMonth() + months + 1, 0);
   return isoLocal(d);
 }

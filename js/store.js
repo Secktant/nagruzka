@@ -4,9 +4,7 @@
 
 import { saveVault, saveLegacy } from './db.js';
 import { buildTimeline } from './engine.js';
-import { horizonEnd } from './format.js';
-
-const TODAY = new Date();
+import { horizonEnd, TODAY } from './format.js';
 
 export const S = {
   db: null,
