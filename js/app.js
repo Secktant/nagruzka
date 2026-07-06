@@ -106,6 +106,21 @@ async function main() {
   });
   wireMoneyInputs(document);
   render();
+  showVersion();
 }
+
+// Версия = имя активного кэша сервис-воркера (единственный источник — CACHE в sw.js),
+// поэтому метка показывает то, что РЕАЛЬНО загружено. До установки SW кэша ещё нет —
+// добираем повторно, когда воркер возьмёт управление.
+async function showVersion() {
+  const el = $('#app-version');
+  if (!el || !('caches' in window)) return;
+  try {
+    const keys = await caches.keys();
+    const vers = keys.map(k => (k.match(/nagruzka-v(\d+)/) || [])[1]).filter(Boolean).map(Number);
+    if (vers.length) el.textContent = 'v' + Math.max(...vers);
+  } catch { /* caches недоступны — метка остаётся пустой */ }
+}
+if ('serviceWorker' in navigator) navigator.serviceWorker.ready.then(showVersion).catch(() => {});
 
 main();

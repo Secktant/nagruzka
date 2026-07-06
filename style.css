@@ -398,6 +398,20 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .toast.bad  { background: #38211d; color: #ff9d8a; border: 1px solid rgba(226, 109, 90, .6); }
 .toast.warn { background: #352f1a; color: #ffd479; border: 1px solid rgba(224, 179, 65, .5); }
 
+/* Версия приложения — крошечная метка над таббаром справа (видно, что реально загружено) */
+#app-version {
+  position: fixed;
+  right: 10px;
+  bottom: calc(env(safe-area-inset-bottom) + 60px);
+  font-size: 10px;
+  letter-spacing: .3px;
+  color: var(--muted);
+  opacity: .45;
+  pointer-events: none;
+  z-index: 5;
+  font-variant-numeric: tabular-nums;
+}
+
 .keyfile-status {
   font-size: 13px; padding: 8px 12px; border-radius: 10px;
   border: 1px solid var(--border); background: var(--surface-2);
