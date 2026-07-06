@@ -31,7 +31,7 @@ body {
   padding:
     calc(20px + env(safe-area-inset-top))
     calc(16px + env(safe-area-inset-right))
-    calc(84px + env(safe-area-inset-bottom))
+    calc(84px * var(--ui-scale, 1) + env(safe-area-inset-bottom))
     calc(16px + env(safe-area-inset-left));
 }
 
@@ -81,7 +81,10 @@ body {
 }
 .month-nav button:hover { background: var(--surface-2); }
 #month-title {
-  min-width: 140px;
+  /* фиксированная (не min-) ширина: «2026» в прогнозе и «сентябрь 2026» в режиме
+     месяца занимают одинаково → ширина .month-nav не меняется на пороге 150%,
+     и кнопка «+» зума не перескакивает при переключении режима. */
+  width: 150px;
   text-align: center;
   font-weight: 600;
   font-size: 16px;
@@ -581,17 +584,19 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   background: rgba(14,17,22,.92);
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--border);
-  padding: 8px 0 calc(8px + env(safe-area-inset-bottom));
+  /* масштаб таббара — через --ui-scale (задаётся applyZoom), а не zoom:
+     fixed-элемент во всю ширину под zoom ломает left/right:0. safe-area не масштабируем. */
+  padding: calc(8px * var(--ui-scale, 1)) 0 calc(8px * var(--ui-scale, 1) + env(safe-area-inset-bottom));
 }
 .tab {
   background: none; border: none;
   color: var(--muted);
-  font-size: 12px;
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  font-size: calc(12px * var(--ui-scale, 1));
+  display: flex; flex-direction: column; align-items: center; gap: calc(3px * var(--ui-scale, 1));
   cursor: pointer;
-  padding: 2px 18px;
+  padding: calc(2px * var(--ui-scale, 1)) calc(18px * var(--ui-scale, 1));
 }
-.tab .ico { font-size: 19px; }
+.tab .ico { font-size: calc(19px * var(--ui-scale, 1)); }
 .tab.active { color: var(--accent); }
 .tab[disabled] { opacity: .45; cursor: default; }
 
