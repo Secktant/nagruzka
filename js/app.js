@@ -117,8 +117,15 @@ async function showVersion() {
   if (!el || !('caches' in window)) return;
   try {
     const keys = await caches.keys();
-    const vers = keys.map(k => (k.match(/nagruzka-v(\d+)/) || [])[1]).filter(Boolean).map(Number);
-    if (vers.length) el.textContent = 'v' + Math.max(...vers);
+    // версии из имён кэшей SW (nagruzka-МАЖОР.МИНОР.ТРИВИАЛ) → показываем наибольшую
+    const vers = keys
+      .map(k => (k.match(/nagruzka-(\d+\.\d+\.\d+)/) || [])[1])
+      .filter(Boolean)
+      .sort((a, b) => {
+        const pa = a.split('.').map(Number), pb = b.split('.').map(Number);
+        return pa[0] - pb[0] || pa[1] - pb[1] || pa[2] - pb[2];
+      });
+    if (vers.length) el.textContent = 'v' + vers[vers.length - 1];
   } catch { /* caches недоступны — метка остаётся пустой */ }
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.ready.then(showVersion).catch(() => {});
