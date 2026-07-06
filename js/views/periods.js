@@ -221,6 +221,10 @@ function openPaymentForm(period, key) {
   // которая может быть «капнута» остатком при досрочном погашении)
   const planSlot = (isVirtual && instObj?.plan) ? instObj.plan.find(it => it.period === period) : null;
   const amountDefault = planSlot ? planSlot.amount : (p ? p.amount : '');
+  // разовый платёж: знак задаём тумблером «Трата / Мне должны», поле показывает величину
+  // (иначе на iOS цифровая клавиатура без минуса — дебиторку не ввести).
+  const owedDefault = isOneOff && amountDefault !== '' && amountDefault < 0;
+  const amountField = amountDefault === '' ? '' : Math.abs(amountDefault);
   // перенос на другую дату — обычный разовый платёж (для submit-ветки)
   const canMove = !isNew && !isVirtual && !p.installmentId && !p.regularId;
   // поле «Дата» показываем для разового И для рассрочки (не для регулярного и не для нового)
@@ -239,9 +243,14 @@ function openPaymentForm(period, key) {
       <datalist id="name-suggest">${names.map(n => `<option value="${esc(n)}">`).join('')}</datalist>
     </label>
     <label>Сумма, ₽
-      ${moneyInput('amount', amountDefault, 'placeholder="5 000" required')}
+      ${moneyInput('amount', amountField, 'placeholder="5 000" required')}
     </label>
-    ${isOneOff ? `<p class="hint" id="owe-hint" hidden>Минус — это деньги, которые <b>должны вам</b> (вернётся): уменьшит нагрузку периода.</p>` : ''}
+    ${isOneOff ? `
+    <div class="chips" id="sign-toggle">
+      <button type="button" class="chip pick ${owedDefault ? '' : 'sel'}" data-sign="expense">Трата</button>
+      <button type="button" class="chip pick ${owedDefault ? 'sel' : ''}" data-sign="owed">🤝 Мне должны</button>
+    </div>
+    <p class="hint" id="owe-hint" ${owedDefault ? '' : 'hidden'}>«Мне должны» — деньги, которые <b>вернутся</b>: уменьшат нагрузку периода.</p>` : ''}
     <div class="lbl-like">Банк</div>
     ${bankChipsHTML(p?.bank || null)}
     ${showDate ? `<label style="margin-top:12px">Дата
@@ -258,16 +267,27 @@ function openPaymentForm(period, key) {
   wireBankChips();
   $('#modal-cancel').onclick = closeModal;
 
-  // подсказку про минус показываем только когда в сумме реально стоит минус
+  // тумблер знака «Трата / Мне должны» (только у разового платежа). Величину пишем в поле,
+  // знак — тут: на iOS цифровая клавиатура без минуса, дебиторку иначе не ввести.
+  const signToggle = $('#sign-toggle');
   const oweHint = $('#owe-hint');
   const amtInp = $('#pay-form [name=amount]');
-  if (oweHint && amtInp) {
-    const syncHint = () => {
-      const v = amtInp.value.trim();
-      oweHint.hidden = !(v.startsWith('-') || v.startsWith('−'));
+  if (signToggle) {
+    const setSign = (sign) => {
+      signToggle.querySelectorAll('.pick').forEach(b => b.classList.toggle('sel', b.dataset.sign === sign));
+      if (oweHint) oweHint.hidden = sign !== 'owed';
     };
-    amtInp.addEventListener('input', syncHint);
-    syncHint(); // при правке уже отрицательной записи — показать сразу
+    signToggle.addEventListener('click', (e) => {
+      const b = e.target.closest('.pick');
+      if (b) setSign(b.dataset.sign);
+    });
+    // десктоп: печать минуса переводит в «Мне должны» и убирает минус из поля (поле = величина)
+    amtInp?.addEventListener('input', () => {
+      if (/[-−]/.test(amtInp.value)) {
+        amtInp.value = amtInp.value.replace(/[-−]/g, '');
+        setSign('owed');
+      }
+    });
   }
 
   const delBtn = $('#pay-delete');
@@ -297,14 +317,19 @@ function openPaymentForm(period, key) {
     e.preventDefault();
     const f = new FormData(e.target);
     const name = f.get('name').trim();
-    const amount = parseMoney(f.get('amount'));
+    // у разового знак берём из тумблера (поле = величина); у остальных — как есть (только плюс)
+    let amount = parseMoney(f.get('amount'));
+    if (isOneOff) {
+      amount = Math.abs(amount);
+      if ($('#sign-toggle .pick.sel')?.dataset.sign === 'owed') amount = -amount;
+    }
     const bank = selectedBank();
     if (!name) return; // поле name с required — пустым сюда не дойдёт
     // разовый платёж может быть отрицательным (это «мне должны» — уменьшает нагрузку);
     // регулярные/рассрочки — строго больше нуля
     if (!Number.isFinite(amount) || amount === 0 || (!isOneOff && amount < 0)) {
       const inp = e.target.querySelector('[name=amount]');
-      inp?.setCustomValidity(isOneOff ? 'Сумма не может быть нулём (минус — если деньги должны вам)' : 'Введите сумму больше нуля');
+      inp?.setCustomValidity(isOneOff ? 'Введите сумму (для долга вам — переключатель «Мне должны»)' : 'Введите сумму больше нуля');
       inp?.reportValidity();
       inp?.addEventListener('input', () => inp.setCustomValidity(''), { once: true });
       return;
