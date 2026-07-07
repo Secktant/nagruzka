@@ -11,6 +11,7 @@ const ASSETS = [
   'style.css',
   'manifest.webmanifest',
   'js/app.js',
+  'js/icons.js',
   'js/format.js',
   'js/dom.js',
   'js/store.js',

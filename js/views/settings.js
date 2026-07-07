@@ -7,6 +7,7 @@ import { S, markDirty, adoptStateJSON, putRegular, deleteRegular, putSettings } 
 import { render } from '../render.js';
 import { $, $$, esc, uid, parseMoney, moneyInput, openModal, closeModal } from '../dom.js';
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
+import { icon } from '../icons.js';
 import { generatePeriods, fmtMoney } from '../engine.js';
 import { todayISO, horizonEnd } from '../format.js';
 import { generateKeyfile, encryptText, encryptTextWithKey, decryptToText, inspect } from '../crypto.js';
@@ -62,7 +63,7 @@ export async function renderSettings() {
       ${regs.map(r => `
         <div class="pay ${r.active ? '' : 'paid'} clickable" data-reg="${r.id}">
           <span class="pay-main">
-            <span class="pay-name">${esc(r.name)}
+            <span class="pay-name"><span class="pn-text">${esc(r.name)}</span>
               <span class="bank-tag">${schedName[r.schedule]}</span>
               ${r.bank ? `<span class="bank-tag">${esc(r.bank)}</span>` : ''}
               ${r.active ? '' : '<span class="bank-tag">выключен</span>'}</span>
@@ -83,8 +84,8 @@ export async function renderSettings() {
     <section class="card">
       <h3>Данные</h3>
       <div class="form-actions" style="justify-content:flex-start">
-        <button class="btn" id="export-btn">⬇ Экспорт в файл</button>
-        <button class="btn" id="import-btn">⬆ Импорт из файла</button>
+        <button class="btn" id="export-btn">${icon('download')} Экспорт в файл</button>
+        <button class="btn" id="import-btn">${icon('upload')} Импорт из файла</button>
         <input type="file" id="import-file" accept=".json" hidden>
       </div>
       <p class="hint">Резервная копия — обычный JSON, без пароля. Удобно для бэкапа на этом
@@ -100,15 +101,15 @@ export async function renderSettings() {
       </div>
       <div class="form-actions" style="justify-content:flex-start;margin-top:8px">
         ${kf
-          ? `<button class="btn" id="kf-download">⬇ Скачать keyfile</button>
+          ? `<button class="btn" id="kf-download">${icon('download')} Скачать keyfile</button>
              <button class="btn danger" id="kf-clear">Удалить keyfile</button>`
           : `<button class="btn" id="kf-create">Создать keyfile</button>`}
-        <button class="btn" id="kf-load">⬆ Загрузить keyfile</button>
+        <button class="btn" id="kf-load">${icon('upload')} Загрузить keyfile</button>
         <input type="file" id="kf-file" hidden>
       </div>
       <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
-        <button class="btn primary" id="enc-export-btn">🔒 Зашифровать и сохранить</button>
-        <button class="btn" id="enc-import-btn">🔓 Загрузить зашифрованную</button>
+        <button class="btn primary" id="enc-export-btn">${icon('lock')} Зашифровать и сохранить</button>
+        <button class="btn" id="enc-import-btn">${icon('unlock')} Загрузить зашифрованную</button>
         <input type="file" id="enc-import-file" hidden>
       </div>
       <p class="hint">Один пароль на всё: файл открывается тем же паролем, что синхронизация (+ keyfile). Отдельный пароль для файла задавать не нужно.</p>

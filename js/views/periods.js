@@ -8,6 +8,7 @@ import { $, esc, uid, parseMoney, moneyInput, openModal, closeModal } from '../d
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
 import { generatePeriods, fmtMoney, fmtPeriod, fmtMonth } from '../engine.js';
 import { todayISO, horizonEnd, fmtPeriodFull, addDays, payKey, payTypeMark } from '../format.js';
+import { icon } from '../icons.js';
 
 // Режим «Периодов»: на широком экране и масштабе < 150% — лента-прогноз за год
 // (скролл, навигация по годам); иначе (телефон ИЛИ 150%) — один месяц, навигация по месяцам.
@@ -32,13 +33,21 @@ export function renderPeriods() {
     return;
   }
   const today = todayISO();
-  const legend = `<div class="pay-legend">
-    <span><span class="pay-type">🔁</span> постоянный</span>
-    <span><span class="pay-type">💳</span> рассрочка</span>
-    <span><span class="pay-type">💵</span> разовый</span>
-    <span><span class="pay-type">🤝</span> мне должны</span>
-  </div>`;
+  const legendOpen = localStorage.getItem('legendOpen') === '1';
+  const legend = `<details class="pay-legend" id="pay-legend"${legendOpen ? ' open' : ''}>
+    <summary>${icon('chevronRight', 'leg-caret')}Легенда</summary>
+    <div class="legend-items">
+      <span><span class="pay-type reg">${icon('reg')}</span> постоянный</span>
+      <span><span class="pay-type inst">${icon('inst')}</span> рассрочка</span>
+      <span><span class="pay-type once">${icon('once')}</span> разовый</span>
+      <span><span class="pay-type owed">${icon('owed')}</span> мне должны</span>
+    </div>
+  </details>`;
   container.innerHTML = legend + days.map(d => periodCard(d, today)).join('');
+
+  // легенда свёрнута по умолчанию; запоминаем открыто/закрыто (иначе схлопывается на перерисовке)
+  const legendEl = container.querySelector('#pay-legend');
+  if (legendEl) legendEl.addEventListener('toggle', () => localStorage.setItem('legendOpen', legendEl.open ? '1' : '0'));
 
   container.querySelectorAll('input[type=checkbox][data-pay]').forEach(cb => {
     cb.addEventListener('change', () => togglePaid(cb.dataset.pay, cb.checked));
@@ -130,7 +139,7 @@ function periodCard(d, today) {
       <div class="card-date">${fmtPeriod(d.period)}${isCurrent ? '<span class="now-dot" title="ближайший период"></span>' : ''}</div>
       <div class="head-right">
         <div class="badge zone-${z.key}">${pct} · ${z.label}</div>
-        <button class="icon-btn" title="Добавить платёж" data-add-pay="${d.period}">+</button>
+        <button class="icon-btn" title="Добавить платёж" data-add-pay="${d.period}">${icon('plus')}</button>
       </div>
     </header>
     <div class="bar"><div class="bar-fill zone-${z.key}" style="width:${barW}%"></div></div>
@@ -162,7 +171,7 @@ function paymentRow(period, p) {
     <input type="checkbox" data-pay="${esc(`${period}|${payKey(p)}`)}" ${p.paid ? 'checked' : ''}>
     <span class="pay-main clickable" data-edit-pay="${esc(payKey(p))}" data-period="${period}" ${drag} title="${movable ? 'Тащи в другой период или кликни, чтобы править' : 'Править платёж'}">
       ${payTypeMark(p)}
-      <span class="pay-name">${esc(p.name)}${progress}${bank}</span>
+      <span class="pay-name"><span class="pn-text">${esc(p.name)}</span>${progress}${bank}</span>
       <span class="pay-amount ${p.amount < 0 ? 'neg' : ''}">${fmtMoney(p.amount)}</span>
     </span>
   </div>`;
@@ -248,7 +257,7 @@ function openPaymentForm(period, key) {
     ${isOneOff ? `
     <div class="chips" id="sign-toggle">
       <button type="button" class="chip pick ${owedDefault ? '' : 'sel'}" data-sign="expense">Трата</button>
-      <button type="button" class="chip pick ${owedDefault ? 'sel' : ''}" data-sign="owed">🤝 Мне должны</button>
+      <button type="button" class="chip pick ${owedDefault ? 'sel' : ''}" data-sign="owed">${icon('owed')} Мне должны</button>
     </div>
     <p class="hint" id="owe-hint" ${owedDefault ? '' : 'hidden'}>«Мне должны» — деньги, которые <b>вернутся</b>: уменьшат нагрузку периода.</p>` : ''}
     <div class="lbl-like">Банк</div>

@@ -5,6 +5,7 @@
 import { S, adoptStateJSON } from './store.js';
 import { render } from './render.js';
 import { $, openModal, closeModal } from './dom.js';
+import { icon } from './icons.js';
 import { exportState, getKeyfile, setLock, clearSyncKey, hasVault, loadVault } from './db.js';
 import { deriveKeyRaw, importAesKey } from './crypto.js';
 import { SyncEngine } from './sync.js';
@@ -131,7 +132,7 @@ export function runLockGate(lock) {
     ov.className = 'lock-overlay';
     ov.innerHTML = `
       <div class="lock-box">
-        <div class="lock-logo">🔒</div>
+        <div class="lock-logo">${icon('lock')}</div>
         <div class="lock-title">Нагрузка</div>
         <div class="lock-status" id="lock-status"></div>
         <button class="btn primary" id="lock-bio" hidden>Повторить · Face / Touch ID</button>
