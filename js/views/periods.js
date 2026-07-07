@@ -427,7 +427,7 @@ function openIncomeForm(period) {
 
   $('#income-form').onsubmit = async e => {
     e.preventDefault();
-    const domRows = $$('#income-rows .income-row');
+    const domRows = document.querySelectorAll('#income-rows .income-row');
     for (const el of domRows) {
       const i = Number(el.dataset.i);
       const name = el.querySelector('[name=iname]').value.trim();
