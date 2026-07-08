@@ -226,6 +226,51 @@ body {
 .legend-items { display: flex; flex-wrap: wrap; gap: 14px; padding: 6px 2px 2px; }
 .legend-items > span { display: inline-flex; align-items: center; gap: 4px; }
 .legend-items .pay-type { width: auto; }
+
+/* тулбар над сеткой: свёрнутая легенда + кнопка фильтра */
+.pay-toolbar {
+  grid-column: 1 / -1;
+  display: flex; align-items: flex-start; flex-wrap: wrap; gap: 10px;
+  margin: -2px 2px 4px;
+}
+.pay-toolbar .pay-legend { margin: 0; }
+.pay-toolbtn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--muted);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 999px; padding: 4px 11px; cursor: pointer;
+}
+.pay-toolbtn:hover { border-color: var(--accent); }
+.pay-toolbtn.act { color: var(--accent); border-color: var(--accent); }
+
+/* заголовок-сортировка в карточке (по-карточно) */
+.sort-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 2px 6px; margin-bottom: 2px;
+  border-bottom: 1px dashed var(--border);
+  font-size: 11px; color: var(--muted);
+}
+.sort-spacer { flex: 1; }
+.sort-col {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: none; border: 1px solid transparent; border-radius: 7px;
+  color: var(--muted); cursor: pointer; padding: 3px 6px; font-size: 11px;
+}
+.sort-col:hover { color: var(--text); background: var(--surface-2); }
+.sort-col.on { color: var(--accent); background: rgba(110,168,254,.1); }
+.sort-rub { font-size: 12px; }
+.sort-car { width: .95em; height: .95em; }
+
+/* модалка фильтра «Показывать» */
+.filter-list { margin-top: 6px; }
+.filter-opt {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 6px; border-radius: 9px; cursor: pointer; font-size: 14px;
+}
+.filter-opt:hover { background: var(--surface-2); }
+.filter-opt input { width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; flex: none; }
+.filter-opt .pay-type { width: auto; color: var(--muted); }
+.filter-all { border-bottom: 1px solid var(--border); border-radius: 0; margin-bottom: 4px; }
 .pay.paid .pay-type { opacity: .5; }
 .inst-tag {
   font-size: 11px;
