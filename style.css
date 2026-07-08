@@ -435,10 +435,20 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   padding: 8px 14px;
   font-size: 14px;
   cursor: pointer;
+  transition: transform .08s ease, border-color .15s ease, filter .15s ease, box-shadow .15s ease;
 }
 .btn:hover { border-color: var(--accent); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #0b1524; font-weight: 600; }
-.btn.primary:hover { filter: brightness(1.1); }
+.btn:active { transform: scale(.97); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #0b1524; font-weight: 600; box-shadow: 0 4px 14px rgba(110,168,254,.28); }
+.btn.primary:hover { filter: brightness(1.08); }
+/* «занятое» состояние: спиннер перед текстом, клики заблокированы (без dim) */
+.btn.busy { pointer-events: none; }
+.btn.busy, .btn.busy:disabled { opacity: 1; cursor: default; }
+.btn.busy::before {
+  content: ""; width: 13px; height: 13px; flex: none;
+  border: 2px solid currentColor; border-top-color: transparent;
+  border-radius: 50%; animation: nz-spin .7s linear infinite;
+}
 .btn.danger { color: var(--red); }
 .btn.danger:hover { border-color: var(--red); }
 .btn.small { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
@@ -447,6 +457,19 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .form.locked .num-steps,
 .form.locked .chips { pointer-events: none; opacity: .6; }
 .btn:disabled:hover { border-color: var(--border); filter: none; }
+
+@keyframes nz-spin { to { transform: rotate(360deg); } }
+
+/* тап-отклик у иконочных кнопок */
+.icon-btn, .pay-toolbtn, .sort-col { transition: transform .08s ease, border-color .15s ease, color .15s ease, background .15s ease; }
+.icon-btn:active, .pay-toolbtn:active, .sort-col:active { transform: scale(.92); }
+
+/* уважаем «уменьшить движение»: гасим тап-скейл и спиннер (оставляем статичное кольцо) */
+@media (prefers-reduced-motion: reduce) {
+  .btn, .icon-btn, .pay-toolbtn, .sort-col { transition: none; }
+  .btn:active, .icon-btn:active, .pay-toolbtn:active, .sort-col:active { transform: none; }
+  .btn.busy::before { animation: none; }
+}
 
 /* Глобальная плашка связи с сервером синка */
 .toast {

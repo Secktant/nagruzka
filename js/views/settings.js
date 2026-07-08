@@ -5,7 +5,7 @@
 
 import { S, markDirty, adoptStateJSON, putRegular, deleteRegular, putSettings } from '../store.js';
 import { render } from '../render.js';
-import { $, $$, esc, uid, parseMoney, moneyInput, openModal, closeModal } from '../dom.js';
+import { $, $$, esc, uid, parseMoney, moneyInput, openModal, closeModal, withBusy } from '../dom.js';
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
 import { icon } from '../icons.js';
 import { generatePeriods, fmtMoney } from '../engine.js';
@@ -137,7 +137,7 @@ export async function renderSettings() {
         ${(S.syncStatus === 'synced' || S.syncStatus === 'syncing')
           ? `<button class="btn" id="sync-off">Выключить синхронизацию</button>
              <button class="btn" id="sync-pass">Сменить пароль</button>`
-          : `<button class="btn primary" id="sync-on" ${(!sid || !kf) ? 'disabled' : ''}>▶ Включить синхронизацию</button>`}
+          : `<button class="btn primary" id="sync-on" ${(!sid || !kf) ? 'disabled' : ''}>${icon('reg')} Включить синхронизацию</button>`}
       </div>
       ${(!sid || !kf) ? `<p class="hint">
         ${!sid ? 'Создай Sync ID на одном устройстве, «Скопировать» → на втором «Вставить» тот же. ' : ''}
@@ -354,12 +354,13 @@ export async function renderSettings() {
       render();
     };
 
-    if ($('#sync-on')) $('#sync-on').onclick = async () => {
+    if ($('#sync-on')) $('#sync-on').onclick = async (e) => {
+      const btn = e.currentTarget;
       const pass = prompt('Пароль синхронизации (запомнится на этом устройстве; сам пароль не хранится):');
       if (!pass) return;
       try {
         S.syncStatus = 'syncing'; updateSyncStatusUI();
-        await S.syncEngine.unlock(sid, pass);   // деривация ключа + первая сверка с сервером
+        await withBusy(btn, () => S.syncEngine.unlock(sid, pass));   // Argon2 (~1с) + первая сверка с сервером
         // «Запомнить на устройстве» — только БЕЗ замка: при замке K не должен лежать готовым.
         if (!(await getLock(S.db))) await setSyncKey(S.db, { key: S.syncEngine.key, salt: S.syncEngine.salt });
         S.vaultKey = S.syncEngine.key;             // включаем локальное шифрование тем же ключом

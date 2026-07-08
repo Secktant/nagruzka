@@ -65,3 +65,12 @@ export function openModal(html) {
   $('#modal').showModal();
 }
 export function closeModal() { $('#modal').close(); }
+
+// «Занятость» кнопки на время async-операции (Argon2/сеть): спиннер + блок кликов.
+// Снимает состояние в finally, даже если fn бросил. Возвращает результат fn.
+export async function withBusy(btn, fn) {
+  if (!btn) return fn();
+  btn.classList.add('busy');
+  try { return await fn(); }
+  finally { btn.classList.remove('busy'); }
+}
