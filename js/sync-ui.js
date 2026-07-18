@@ -38,18 +38,48 @@ export function createSyncEngine() {
   });
 }
 
-// Глобальная плашка связи: зелёная (на связи, авто-исчезает), красная (висит до восстановления).
-let toastTimer = null;
-let prevConn = null; // synced | offline | error — для показа «зелёной» только при первом/после сбоя
-export function showToast(kind, text, autohideMs) {
+// Глобальная плашка связи: [точка][текст][×]. Зелёная/жёлтая авто-исчезают,
+// красная висит до восстановления; если закрыть красную крестиком — вернётся через 30с.
+let toastTimer = null;        // авто-скрытие
+let reappearTimer = null;     // возврат «красной» после закрытия крестиком
+let prevConn = null;          // synced | offline | error — «зелёную» показываем только при первом/после сбоя
+let sticky = null;            // {kind,text} последней висящей (bad) плашки — для возврата через 30с
+
+function renderToast(kind, text) {
   const el = $('#toast');
-  if (!el) return;
-  el.textContent = text;
+  if (!el) return null;
+  el.innerHTML = `<span class="toast-dot"></span><span class="toast-msg"></span><button class="toast-x" type="button" aria-label="Закрыть">${icon('x')}</button>`;
+  const msg = el.querySelector('.toast-msg');
+  msg.textContent = text; msg.title = text;          // одна строка + ellipsis; полный текст — в title
   el.className = 'toast show ' + kind;
-  clearTimeout(toastTimer);
+  el.querySelector('.toast-x').onclick = () => dismissToast(kind);
+  return el;
+}
+export function showToast(kind, text, autohideMs) {
+  clearTimeout(toastTimer); clearTimeout(reappearTimer);
+  const el = renderToast(kind, text);
+  if (!el) return;
+  sticky = kind === 'bad' ? { kind, text } : null;   // висящая проблема — помним для возврата
   if (autohideMs) toastTimer = setTimeout(() => el.classList.remove('show'), autohideMs);
 }
-export function hideToast() { const el = $('#toast'); if (el) { clearTimeout(toastTimer); el.classList.remove('show'); } }
+export function hideToast() {
+  const el = $('#toast');
+  clearTimeout(toastTimer); clearTimeout(reappearTimer); sticky = null;
+  if (el) el.classList.remove('show');
+}
+// Крестик: гасим. Красную (bad) возвращаем через 30с, если проблема ещё жива
+// (sticky не сброшен переходом в synced/off/locked).
+function dismissToast(kind) {
+  const el = $('#toast');
+  clearTimeout(toastTimer); clearTimeout(reappearTimer);
+  if (el) el.classList.remove('show');
+  if (kind === 'bad' && sticky) {
+    const again = sticky;
+    reappearTimer = setTimeout(() => {
+      if (sticky && sticky.text === again.text) showToast(again.kind, again.text, 0);
+    }, 30000);
+  }
+}
 export function updateConnBanner(s) {
   if (s === 'syncing') return;                       // транзиентное — не трогаем плашку
   if (s === 'off' || s === 'locked') { hideToast(); prevConn = null; return; }
@@ -59,7 +89,7 @@ export function updateConnBanner(s) {
     prevConn = 'synced'; return;
   }
   if (s === 'offline') { showToast('bad', 'Синхронизация приостановлена', 0); prevConn = 'offline'; return; }
-  if (s === 'error')   { showToast('bad', '⚠ Не удалось расшифровать — проверь пароль/keyfile', 0); prevConn = 'error'; return; }
+  if (s === 'error')   { showToast('bad', 'Не удалось расшифровать — проверь пароль/keyfile', 0); prevConn = 'error'; return; }
 }
 
 // Включение замка (Шаг 5): двухшаговая модалка. Шаг 1 — пароль в поле окна (не системный

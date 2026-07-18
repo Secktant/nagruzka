@@ -478,20 +478,39 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   left: 50%;
   transform: translateX(-50%) translateY(-150%);
   z-index: 60;
-  max-width: calc(100vw - 24px);
-  padding: 9px 16px;
+  display: flex; align-items: center; gap: 9px;
+  max-width: min(360px, calc(100vw - 24px));
+  padding: 9px 10px 9px 13px;
   border-radius: 12px;
   font-size: 13px;
   font-weight: 600;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+  /* единый тёмный фон + цветной акцент точкой/рамкой (уходим от кислотных заливок) */
+  background: rgba(22, 27, 35, .92);
+  border: 1px solid var(--border);
+  color: var(--text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+  backdrop-filter: blur(8px);
   opacity: 0;
   pointer-events: none;
   transition: transform .25s ease, opacity .25s ease;
 }
-.toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
-.toast.ok   { background: #15331f; color: #7ee2a4; border: 1px solid rgba(63, 185, 106, .55); }
-.toast.bad  { background: #38211d; color: #ff9d8a; border: 1px solid rgba(226, 109, 90, .6); }
-.toast.warn { background: #352f1a; color: #ffd479; border: 1px solid rgba(224, 179, 65, .5); }
+.toast.show { transform: translateX(-50%) translateY(0); opacity: 1; pointer-events: auto; }
+.toast-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.toast-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toast-x {
+  flex: none; width: 22px; height: 22px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: none; color: var(--muted); cursor: pointer; border-radius: 6px;
+}
+.toast-x:hover { color: var(--text); background: var(--surface-2); }
+.toast-x svg { width: 13px; height: 13px; stroke-width: 2; }
+/* цвет = точка + рамка + текст, фон единый */
+.toast.ok   { border-color: rgba(63, 185, 106, .45); }
+.toast.ok   .toast-dot { background: var(--green); }  .toast.ok   .toast-msg { color: #88e2a6; }
+.toast.bad  { border-color: rgba(226, 109, 90, .5); }
+.toast.bad  .toast-dot { background: var(--red); }    .toast.bad  .toast-msg { color: #ff9d8a; }
+.toast.warn { border-color: rgba(224, 179, 65, .45); }
+.toast.warn .toast-dot { background: var(--yellow); } .toast.warn .toast-msg { color: #ffd479; }
 
 /* Версия приложения — крошечная метка над таббаром справа (видно, что реально загружено) */
 #app-version {
