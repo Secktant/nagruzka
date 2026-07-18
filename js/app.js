@@ -136,4 +136,5 @@ async function showVersion() {
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.ready.then(showVersion).catch(() => {});
 
-main();
+// прячем стартовый лоадер, когда приложение построено (или упало — не висеть вечно)
+main().finally(() => document.getElementById('boot-loader')?.classList.add('is-hidden'));

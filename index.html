@@ -18,6 +18,12 @@
   <meta name="apple-mobile-web-app-title" content="Нагрузка">
 </head>
 <body>
+  <!-- Стартовый лоадер: виден с загрузки страницы до первого render() (см. app.js).
+       Экран-замок (z-index 9999) при наличии перекрывает его. -->
+  <div id="boot-loader">
+    <div class="boot-spin" aria-hidden="true"></div>
+    <div class="boot-cap">Загрузка…</div>
+  </div>
   <div class="shell">
     <div class="topbar">
       <div class="brand">Нагрузка</div>

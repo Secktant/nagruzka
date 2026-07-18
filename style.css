@@ -512,6 +512,28 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .toast.warn { border-color: rgba(224, 179, 65, .45); }
 .toast.warn .toast-dot { background: var(--yellow); } .toast.warn .toast-msg { color: #ffd479; }
 
+/* стартовый лоадер: виден до первого render(), затем плавно гаснет (app.js) */
+#boot-loader {
+  position: fixed; inset: 0; z-index: 80;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; background: var(--bg);
+  transition: opacity .25s ease;
+}
+#boot-loader.is-hidden { opacity: 0; pointer-events: none; }
+.boot-spin {
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 3px solid var(--surface-2); border-top-color: var(--accent);
+  animation: nz-spin .8s linear infinite;
+}
+.boot-cap { font-size: 13px; color: var(--muted); }
+/* мини-спиннер в строке статуса синка */
+.mini-spin {
+  display: inline-block; width: 11px; height: 11px; vertical-align: -1px;
+  border: 2px solid var(--surface-2); border-top-color: currentColor;
+  border-radius: 50%; animation: nz-spin .7s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .boot-spin, .mini-spin { animation: none; } }
+
 /* Версия приложения — крошечная метка над таббаром справа (видно, что реально загружено) */
 #app-version {
   position: fixed;

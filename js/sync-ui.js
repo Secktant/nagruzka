@@ -16,12 +16,13 @@ export function updateSyncStatusUI() {
   if (!el) return;
   const map = {
     off: ['—', ''], locked: ['🔒 заблокировано', 'off'],
-    syncing: ['⟳ синхронизация…', 'on'], synced: ['✓ синхронизировано', 'on'],
+    syncing: ['синхронизация…', 'on'], synced: ['✓ синхронизировано', 'on'],
     offline: ['⚠ сервер недоступен', 'warn'], conflict: ['⚠ был конфликт, взято свежее', 'warn'],
     error: ['⚠ ошибка', 'warn'],
   };
   const [text, cls] = map[S.syncStatus] || ['—', ''];
-  el.textContent = text;
+  if (S.syncStatus === 'syncing') el.innerHTML = '<span class="mini-spin" aria-hidden="true"></span> синхронизация…';
+  else el.textContent = text;
   el.className = 'keyfile-status ' + cls;
 }
 
