@@ -2,6 +2,7 @@
 // Вынесены из app.js для тестируемости (см. test/format.test.js) и переиспользования.
 
 import { fmtPeriod } from './engine.js';
+import { icon } from './icons.js';
 
 // Горизонт ленты: на сколько месяцев вперёд строим периоды.
 export const HORIZON_MONTHS = 18;
@@ -46,11 +47,11 @@ export function payKey(p) {
 // Тип платежа → иконка-маркер (постоянный / из рассрочки / разовый / «мне должны»).
 export function payTypeMark(p) {
   const owed = !p.regularId && !p.installmentId && p.amount < 0;  // дебиторка: разовый минус
-  const m = owed ? ['owed', '🤝', 'Вам должны (вернётся)']
-    : p.regularId ? ['reg', '🔁', 'Постоянный платёж']
-    : p.installmentId ? ['inst', '💳', 'Платёж по рассрочке']
-    : ['once', '💵', 'Разовый платёж'];
-  return `<span class="pay-type ${m[0]}" title="${m[2]}" aria-label="${m[2]}">${m[1]}</span>`;
+  const m = owed ? ['owed', 'Вам должны (вернётся)']
+    : p.regularId ? ['reg', 'Постоянный платёж']
+    : p.installmentId ? ['inst', 'Платёж по рассрочке']
+    : ['once', 'Разовый платёж'];
+  return `<span class="pay-type ${m[0]}" title="${m[1]}" aria-label="${m[1]}">${icon(m[0])}</span>`;
 }
 
 // Русская форма множественного числа: plural(n, 'день','дня','дней').

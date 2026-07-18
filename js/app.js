@@ -79,7 +79,13 @@ async function main() {
   function applyZoom(z) {
     z = clampZoom(z);
     S.zoomLevel = z;
+    // контент и топбар масштабируем через zoom (они в потоке — безопасно). Таббар
+    // фиксирован во всю ширину (left/right:0) — zoom ломает привязку, поэтому его
+    // содержимое масштабируем переменной --ui-scale (см. .tabbar/.tab в CSS).
+    // Единый коэффициент z → весь интерфейс живёт в одном масштабе, «ровно».
     $$('.view').forEach(v => { v.style.zoom = z; });
+    const tb = $('.topbar'); if (tb) tb.style.zoom = z;
+    document.documentElement.style.setProperty('--ui-scale', String(z));
     const el = $('#zoom-val'); if (el) el.textContent = Math.round(z * 100) + '%';
     localStorage.setItem('zoom', String(z));
     return z;
@@ -130,4 +136,5 @@ async function showVersion() {
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.ready.then(showVersion).catch(() => {});
 
-main();
+// прячем стартовый лоадер, когда приложение построено (или упало — не висеть вечно)
+main().finally(() => document.getElementById('boot-loader')?.classList.add('is-hidden'));

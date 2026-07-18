@@ -1,12 +1,14 @@
 // Вкладка «Настройки»: зарплата, регулярные платежи (+форма), банки, экспорт/импорт
-// (JSON и шифрованный .nz), keyfile, Sync ID, синхронизация, замок. Хендлеры мутируют
+// (только шифрованный .nz — plaintext-JSON убран как небезопасный), keyfile, Sync ID,
+// синхронизация, замок. Хендлеры мутируют
 // S и зовут render(); включение/выключение синка и замка — через sync-ui.
 // ВНИМАНИЕ БЕЗОПАСНОСТИ: логика ключей/сейфа перенесена ДОСЛОВНО — не менять при распиле.
 
 import { S, markDirty, adoptStateJSON, putRegular, deleteRegular, putSettings } from '../store.js';
 import { render } from '../render.js';
-import { $, $$, esc, uid, parseMoney, moneyInput, openModal, closeModal } from '../dom.js';
+import { $, $$, esc, uid, parseMoney, moneyInput, openModal, closeModal, withBusy } from '../dom.js';
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
+import { icon } from '../icons.js';
 import { generatePeriods, fmtMoney } from '../engine.js';
 import { todayISO, horizonEnd } from '../format.js';
 import { generateKeyfile, encryptText, encryptTextWithKey, decryptToText, inspect } from '../crypto.js';
@@ -62,7 +64,7 @@ export async function renderSettings() {
       ${regs.map(r => `
         <div class="pay ${r.active ? '' : 'paid'} clickable" data-reg="${r.id}">
           <span class="pay-main">
-            <span class="pay-name">${esc(r.name)}
+            <span class="pay-name"><span class="pn-text">${esc(r.name)}</span>
               <span class="bank-tag">${schedName[r.schedule]}</span>
               ${r.bank ? `<span class="bank-tag">${esc(r.bank)}</span>` : ''}
               ${r.active ? '' : '<span class="bank-tag">выключен</span>'}</span>
@@ -81,18 +83,7 @@ export async function renderSettings() {
     </section>
 
     <section class="card">
-      <h3>Данные</h3>
-      <div class="form-actions" style="justify-content:flex-start">
-        <button class="btn" id="export-btn">⬇ Экспорт в файл</button>
-        <button class="btn" id="import-btn">⬆ Импорт из файла</button>
-        <input type="file" id="import-file" accept=".json" hidden>
-      </div>
-      <p class="hint">Резервная копия — обычный JSON, без пароля. Удобно для бэкапа на этом
-      устройстве; не передавайте такой файл через сеть.</p>
-    </section>
-
-    <section class="card">
-      <h3>Зашифрованная копия · синхронизация</h3>
+      <h3>Резервная копия · синхронизация</h3>
       <div class="keyfile-status ${kf ? 'on' : 'off'}">
         ${kf
           ? 'keyfile активен — второй фактор включён'
@@ -100,15 +91,15 @@ export async function renderSettings() {
       </div>
       <div class="form-actions" style="justify-content:flex-start;margin-top:8px">
         ${kf
-          ? `<button class="btn" id="kf-download">⬇ Скачать keyfile</button>
+          ? `<button class="btn" id="kf-download">${icon('download')} Скачать keyfile</button>
              <button class="btn danger" id="kf-clear">Удалить keyfile</button>`
           : `<button class="btn" id="kf-create">Создать keyfile</button>`}
-        <button class="btn" id="kf-load">⬆ Загрузить keyfile</button>
+        <button class="btn" id="kf-load">${icon('upload')} Загрузить keyfile</button>
         <input type="file" id="kf-file" hidden>
       </div>
       <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
-        <button class="btn primary" id="enc-export-btn">🔒 Зашифровать и сохранить</button>
-        <button class="btn" id="enc-import-btn">🔓 Загрузить зашифрованную</button>
+        <button class="btn primary" id="enc-export-btn">${icon('lock')} Зашифровать и сохранить</button>
+        <button class="btn" id="enc-import-btn">${icon('unlock')} Загрузить зашифрованную</button>
         <input type="file" id="enc-import-file" hidden>
       </div>
       <p class="hint">Один пароль на всё: файл открывается тем же паролем, что синхронизация (+ keyfile). Отдельный пароль для файла задавать не нужно.</p>
@@ -136,7 +127,7 @@ export async function renderSettings() {
         ${(S.syncStatus === 'synced' || S.syncStatus === 'syncing')
           ? `<button class="btn" id="sync-off">Выключить синхронизацию</button>
              <button class="btn" id="sync-pass">Сменить пароль</button>`
-          : `<button class="btn primary" id="sync-on" ${(!sid || !kf) ? 'disabled' : ''}>▶ Включить синхронизацию</button>`}
+          : `<button class="btn primary" id="sync-on" ${(!sid || !kf) ? 'disabled' : ''}>${icon('reg')} Включить синхронизацию</button>`}
       </div>
       ${(!sid || !kf) ? `<p class="hint">
         ${!sid ? 'Создай Sync ID на одном устройстве, «Скопировать» → на втором «Вставить» тот же. ' : ''}
@@ -183,30 +174,6 @@ export async function renderSettings() {
       S.state.settings.banks = S.state.settings.banks.filter(b => b !== rm);
       await putSettings(S.db, S.state.settings);
       render();
-    }
-  });
-
-  $('#export-btn').onclick = () => {
-    const blob = new Blob([exportState(S.state)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `nagruzka-backup-${todayISO()}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
-
-  $('#import-btn').onclick = () => $('#import-file').click();
-  $('#import-file').addEventListener('change', async e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    if (!confirm('Импорт ЗАМЕНИТ все текущие данные содержимым файла. Продолжить?')) return;
-    try {
-      await adoptStateJSON(await file.text());
-      render();
-      markDirty(); // если синк включён — выгрузить импортированные данные на сервер
-      alert('Импорт выполнен ✓');
-    } catch (err) {
-      alert('Не получилось: ' + err.message);
     }
   });
 
@@ -302,10 +269,9 @@ export async function renderSettings() {
       const ok = confirm(
         `Расшифровано ✓\nДата копии: ${when || '—'}\n` +
         `Записей: ${data.records?.length ?? 0}, рассрочек: ${data.installments?.length ?? 0}\n\n` +
-        'Импорт ЗАМЕНИТ все текущие данные. Перед заменой скачается бэкап текущего состояния. Продолжить?'
+        'Импорт ЗАМЕНИТ все текущие данные. Продолжить?'
       );
       if (!ok) return;
-      downloadBytes(exportState(S.state), `nagruzka-before-import-${todayISO()}.json`, 'application/json');
       await adoptStateJSON(json);
       render();
       markDirty(); // если синк включён — выгрузить импортированные данные на сервер
@@ -353,12 +319,13 @@ export async function renderSettings() {
       render();
     };
 
-    if ($('#sync-on')) $('#sync-on').onclick = async () => {
+    if ($('#sync-on')) $('#sync-on').onclick = async (e) => {
+      const btn = e.currentTarget;
       const pass = prompt('Пароль синхронизации (запомнится на этом устройстве; сам пароль не хранится):');
       if (!pass) return;
       try {
         S.syncStatus = 'syncing'; updateSyncStatusUI();
-        await S.syncEngine.unlock(sid, pass);   // деривация ключа + первая сверка с сервером
+        await withBusy(btn, () => S.syncEngine.unlock(sid, pass));   // Argon2 (~1с) + первая сверка с сервером
         // «Запомнить на устройстве» — только БЕЗ замка: при замке K не должен лежать готовым.
         if (!(await getLock(S.db))) await setSyncKey(S.db, { key: S.syncEngine.key, salt: S.syncEngine.salt });
         S.vaultKey = S.syncEngine.key;             // включаем локальное шифрование тем же ключом

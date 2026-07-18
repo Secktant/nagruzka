@@ -15,6 +15,17 @@
 
 * { box-sizing: border-box; }
 
+/* Инлайн-SVG (js/icons.js + статичный хром). Размер = 1.1em от шрифта контекста,
+   поэтому иконки красятся currentColor и масштабируются зумом вместе с текстом. */
+svg.ic {
+  width: 1.1em; height: 1.1em;
+  fill: none; stroke: currentColor;
+  stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round;
+  flex: none; vertical-align: -0.15em;
+}
+/* иконка-only кнопки/спаны: центрируем svg */
+.tab .ico, .month-nav button, .icon-btn, #modal-close { display: flex; align-items: center; justify-content: center; }
+
 body {
   margin: 0;
   background: var(--bg);
@@ -31,7 +42,7 @@ body {
   padding:
     calc(20px + env(safe-area-inset-top))
     calc(16px + env(safe-area-inset-right))
-    calc(84px + env(safe-area-inset-bottom))
+    calc(84px * var(--ui-scale, 1) + env(safe-area-inset-bottom))
     calc(16px + env(safe-area-inset-left));
 }
 
@@ -81,7 +92,10 @@ body {
 }
 .month-nav button:hover { background: var(--surface-2); }
 #month-title {
-  min-width: 140px;
+  /* фиксированная (не min-) ширина: «2026» в прогнозе и «сентябрь 2026» в режиме
+     месяца занимают одинаково → ширина .month-nav не меняется на пороге 150%,
+     и кнопка «+» зума не перескакивает при переключении режима. */
+  width: 150px;
   text-align: center;
   font-weight: 600;
   font-size: 16px;
@@ -181,7 +195,11 @@ body {
 .pay:last-child { border-bottom: none; }
 .pay input { width: 17px; height: 17px; accent-color: var(--green); cursor: pointer; flex: none; }
 .pay-name { flex: 1; display: flex; align-items: center; gap: 7px; min-width: 0; }
-.pay.paid .pay-name { color: var(--muted); text-decoration: line-through; text-decoration-color: rgba(139,151,168,.5); }
+.pay.paid .pay-name { color: var(--muted); }
+/* зачёркивание — на самих токенах (имя, бейдж банка) по их собственным метрикам,
+   иначе линия от крупного .pay-name проходит по низу мелкого бейджа. */
+.pay.paid .pn-text,
+.pay.paid .bank-tag { text-decoration: line-through; text-decoration-color: rgba(139,151,168,.5); }
 .pay-amount { font-weight: 600; font-variant-numeric: tabular-nums; }
 .pay.paid .pay-amount { color: var(--muted); font-weight: 500; }
 
@@ -194,12 +212,65 @@ body {
 }
 .pay-legend {
   grid-column: 1 / -1;   /* во всю ширину сетки, не занимать ячейку карточки */
-  display: flex; flex-wrap: wrap; gap: 14px;
+  margin: -2px 2px 4px;
   font-size: 12px; color: var(--muted);
+}
+.pay-legend > summary {
+  display: inline-flex; align-items: center; gap: 5px;
+  cursor: pointer; user-select: none; list-style: none;
+  padding: 4px 2px; width: max-content;
+}
+.pay-legend > summary::-webkit-details-marker { display: none; }
+.pay-legend .leg-caret { transition: transform .15s; color: var(--muted); }
+.pay-legend[open] > summary .leg-caret { transform: rotate(90deg); }
+.legend-items { display: flex; flex-wrap: wrap; gap: 14px; padding: 6px 2px 2px; }
+.legend-items > span { display: inline-flex; align-items: center; gap: 4px; }
+.legend-items .pay-type { width: auto; }
+
+/* тулбар над сеткой: свёрнутая легенда + кнопка фильтра */
+.pay-toolbar {
+  grid-column: 1 / -1;
+  display: flex; align-items: flex-start; flex-wrap: wrap; gap: 10px;
   margin: -2px 2px 4px;
 }
-.pay-legend span { display: inline-flex; align-items: center; gap: 3px; }
-.pay-legend .pay-type { width: auto; }
+.pay-toolbar .pay-legend { margin: 0; }
+.pay-toolbtn {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--muted);
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 999px; padding: 4px 11px; cursor: pointer;
+}
+.pay-toolbtn:hover { border-color: var(--accent); }
+.pay-toolbtn.act { color: var(--accent); border-color: var(--accent); }
+
+/* заголовок-сортировка в карточке (по-карточно) */
+.sort-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 3px 2px 6px; margin-bottom: 2px;
+  border-bottom: 1px dashed var(--border);
+  font-size: 11px; color: var(--muted);
+}
+.sort-spacer { flex: 1; }
+.sort-col {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: none; border: 1px solid transparent; border-radius: 7px;
+  color: var(--muted); cursor: pointer; padding: 3px 6px; font-size: 11px;
+}
+.sort-col:hover { color: var(--text); background: var(--surface-2); }
+.sort-col.on { color: var(--accent); background: rgba(110,168,254,.1); }
+.sort-rub { font-size: 12px; }
+.sort-car { width: .95em; height: .95em; }
+
+/* модалка фильтра «Показывать» */
+.filter-list { margin-top: 6px; }
+.filter-opt {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 6px; border-radius: 9px; cursor: pointer; font-size: 14px;
+}
+.filter-opt:hover { background: var(--surface-2); }
+.filter-opt input { width: 17px; height: 17px; accent-color: var(--accent); cursor: pointer; flex: none; }
+.filter-opt .pay-type { width: auto; color: var(--muted); }
+.filter-all { border-bottom: 1px solid var(--border); border-radius: 0; margin-bottom: 4px; }
 .pay.paid .pay-type { opacity: .5; }
 .inst-tag {
   font-size: 11px;
@@ -297,6 +368,23 @@ dialog {
 dialog[open] {
   display: flex;
   flex-direction: column;
+  animation: modal-in .18s ease-out;   /* играет только при открытии (showModal), не на рендерах */
+}
+/* центрирование через translate сохраняем в кадрах, добавляем лёгкий подъём+масштаб */
+@keyframes modal-in {
+  from { opacity: 0; transform: translate(-50%, -46%) scale(.98); }
+  to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+dialog[open]::backdrop { animation: backdrop-in .2s ease; }
+@keyframes backdrop-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* лёгкое проявление вкладки при переключении (играет на смене таба — вью получает
+   display; НЕ на правках данных, т.к. меняется только innerHTML контента, не сам .view) */
+.view { animation: view-in .2s ease; }
+@keyframes view-in { from { opacity: 0; } to { opacity: 1; } }
+
+@media (prefers-reduced-motion: reduce) {
+  dialog[open], dialog[open]::backdrop, .view { animation: none; }
 }
 #modal-body {
   overflow-y: auto;
@@ -356,6 +444,7 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 }
 .spacer { flex: 1; }
 .btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   color: var(--text);
@@ -363,10 +452,20 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   padding: 8px 14px;
   font-size: 14px;
   cursor: pointer;
+  transition: transform .08s ease, border-color .15s ease, filter .15s ease, box-shadow .15s ease;
 }
 .btn:hover { border-color: var(--accent); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #0b1524; font-weight: 600; }
-.btn.primary:hover { filter: brightness(1.1); }
+.btn:active { transform: scale(.97); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #0b1524; font-weight: 600; box-shadow: 0 4px 14px rgba(110,168,254,.28); }
+.btn.primary:hover { filter: brightness(1.08); }
+/* «занятое» состояние: спиннер перед текстом, клики заблокированы (без dim) */
+.btn.busy { pointer-events: none; }
+.btn.busy, .btn.busy:disabled { opacity: 1; cursor: default; }
+.btn.busy::before {
+  content: ""; width: 13px; height: 13px; flex: none;
+  border: 2px solid currentColor; border-top-color: transparent;
+  border-radius: 50%; animation: nz-spin .7s linear infinite;
+}
 .btn.danger { color: var(--red); }
 .btn.danger:hover { border-color: var(--red); }
 .btn.small { padding: 5px 10px; font-size: 13px; border-radius: 8px; }
@@ -376,6 +475,19 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .form.locked .chips { pointer-events: none; opacity: .6; }
 .btn:disabled:hover { border-color: var(--border); filter: none; }
 
+@keyframes nz-spin { to { transform: rotate(360deg); } }
+
+/* тап-отклик у иконочных кнопок */
+.icon-btn, .pay-toolbtn, .sort-col { transition: transform .08s ease, border-color .15s ease, color .15s ease, background .15s ease; }
+.icon-btn:active, .pay-toolbtn:active, .sort-col:active { transform: scale(.92); }
+
+/* уважаем «уменьшить движение»: гасим тап-скейл и спиннер (оставляем статичное кольцо) */
+@media (prefers-reduced-motion: reduce) {
+  .btn, .icon-btn, .pay-toolbtn, .sort-col { transition: none; }
+  .btn:active, .icon-btn:active, .pay-toolbtn:active, .sort-col:active { transform: none; }
+  .btn.busy::before { animation: none; }
+}
+
 /* Глобальная плашка связи с сервером синка */
 .toast {
   position: fixed;
@@ -383,20 +495,61 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   left: 50%;
   transform: translateX(-50%) translateY(-150%);
   z-index: 60;
-  max-width: calc(100vw - 24px);
-  padding: 9px 16px;
+  display: flex; align-items: center; gap: 9px;
+  max-width: min(360px, calc(100vw - 24px));
+  padding: 9px 10px 9px 13px;
   border-radius: 12px;
   font-size: 13px;
   font-weight: 600;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+  /* единый тёмный фон + цветной акцент точкой/рамкой (уходим от кислотных заливок) */
+  background: rgba(22, 27, 35, .92);
+  border: 1px solid var(--border);
+  color: var(--text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+  backdrop-filter: blur(8px);
   opacity: 0;
   pointer-events: none;
   transition: transform .25s ease, opacity .25s ease;
 }
-.toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
-.toast.ok   { background: #15331f; color: #7ee2a4; border: 1px solid rgba(63, 185, 106, .55); }
-.toast.bad  { background: #38211d; color: #ff9d8a; border: 1px solid rgba(226, 109, 90, .6); }
-.toast.warn { background: #352f1a; color: #ffd479; border: 1px solid rgba(224, 179, 65, .5); }
+.toast.show { transform: translateX(-50%) translateY(0); opacity: 1; pointer-events: auto; }
+.toast-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+.toast-msg { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toast-x {
+  flex: none; width: 22px; height: 22px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: none; color: var(--muted); cursor: pointer; border-radius: 6px;
+}
+.toast-x:hover { color: var(--text); background: var(--surface-2); }
+.toast-x svg { width: 13px; height: 13px; stroke-width: 2; }
+/* цвет = точка + рамка + текст, фон единый */
+.toast.ok   { border-color: rgba(63, 185, 106, .45); }
+.toast.ok   .toast-dot { background: var(--green); }  .toast.ok   .toast-msg { color: #88e2a6; }
+.toast.bad  { border-color: rgba(226, 109, 90, .5); }
+.toast.bad  .toast-dot { background: var(--red); }    .toast.bad  .toast-msg { color: #ff9d8a; }
+.toast.warn { border-color: rgba(224, 179, 65, .45); }
+.toast.warn .toast-dot { background: var(--yellow); } .toast.warn .toast-msg { color: #ffd479; }
+
+/* стартовый лоадер: виден до первого render(), затем плавно гаснет (app.js) */
+#boot-loader {
+  position: fixed; inset: 0; z-index: 80;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 14px; background: var(--bg);
+  transition: opacity .25s ease;
+}
+#boot-loader.is-hidden { opacity: 0; pointer-events: none; }
+.boot-spin {
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 3px solid var(--surface-2); border-top-color: var(--accent);
+  animation: nz-spin .8s linear infinite;
+}
+.boot-cap { font-size: 13px; color: var(--muted); }
+/* мини-спиннер в строке статуса синка */
+.mini-spin {
+  display: inline-block; width: 11px; height: 11px; vertical-align: -1px;
+  border: 2px solid var(--surface-2); border-top-color: currentColor;
+  border-radius: 50%; animation: nz-spin .7s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) { .boot-spin, .mini-spin { animation: none; } }
 
 /* Версия приложения — крошечная метка над таббаром справа (видно, что реально загружено) */
 #app-version {
@@ -581,17 +734,19 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   background: rgba(14,17,22,.92);
   backdrop-filter: blur(12px);
   border-top: 1px solid var(--border);
-  padding: 8px 0 calc(8px + env(safe-area-inset-bottom));
+  /* масштаб таббара — через --ui-scale (задаётся applyZoom), а не zoom:
+     fixed-элемент во всю ширину под zoom ломает left/right:0. safe-area не масштабируем. */
+  padding: calc(8px * var(--ui-scale, 1)) 0 calc(8px * var(--ui-scale, 1) + env(safe-area-inset-bottom));
 }
 .tab {
   background: none; border: none;
   color: var(--muted);
-  font-size: 12px;
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  font-size: calc(12px * var(--ui-scale, 1));
+  display: flex; flex-direction: column; align-items: center; gap: calc(3px * var(--ui-scale, 1));
   cursor: pointer;
-  padding: 2px 18px;
+  padding: calc(2px * var(--ui-scale, 1)) calc(18px * var(--ui-scale, 1));
 }
-.tab .ico { font-size: 19px; }
+.tab .ico { font-size: calc(19px * var(--ui-scale, 1)); }
 .tab.active { color: var(--accent); }
 .tab[disabled] { opacity: .45; cursor: default; }
 
@@ -633,7 +788,7 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   display: flex; flex-direction: column; gap: 12px;
   width: min(320px, 86vw); text-align: center; padding: 28px 22px;
 }
-.lock-logo { font-size: 40px; line-height: 1; }
+.lock-logo { font-size: 40px; line-height: 1; color: var(--accent); }
 .lock-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
 .lock-box .btn { width: 100%; justify-content: center; }
 .lock-err { color: var(--red); font-size: 13px; min-height: 18px; }

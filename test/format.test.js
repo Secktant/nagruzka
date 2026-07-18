@@ -58,25 +58,25 @@ describe('payKey — стабильный ключ платёжной строк
 // ─────────────────────────────────────────────────────────────────────────────
 describe('payTypeMark — иконка типа платежа', () => {
   const mark = (p) => payTypeMark(p);
-  test('дебиторка: разовый минус → 🤝 owed', () => {
+  test('дебиторка: разовый минус → owed (SVG)', () => {
     const h = mark({ amount: -5000 });
     assert.match(h, /pay-type owed/);
-    assert.match(h, /🤝/);
+    assert.match(h, /<svg class="ic"/);
   });
-  test('регулярный → 🔁 reg', () => {
+  test('регулярный → reg (SVG)', () => {
     const h = mark({ regularId: 'r', amount: 100 });
     assert.match(h, /pay-type reg/);
-    assert.match(h, /🔁/);
+    assert.match(h, /<svg class="ic"/);
   });
-  test('рассрочка → 💳 inst', () => {
+  test('рассрочка → inst (SVG)', () => {
     const h = mark({ installmentId: 'i', amount: 100 });
     assert.match(h, /pay-type inst/);
-    assert.match(h, /💳/);
+    assert.match(h, /<svg class="ic"/);
   });
-  test('разовый плюс → 💵 once', () => {
+  test('разовый плюс → once (SVG)', () => {
     const h = mark({ amount: 100 });
     assert.match(h, /pay-type once/);
-    assert.match(h, /💵/);
+    assert.match(h, /<svg class="ic"/);
   });
 });
 

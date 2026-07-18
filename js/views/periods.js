@@ -8,11 +8,87 @@ import { $, esc, uid, parseMoney, moneyInput, openModal, closeModal } from '../d
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
 import { generatePeriods, fmtMoney, fmtPeriod, fmtMonth } from '../engine.js';
 import { todayISO, horizonEnd, fmtPeriodFull, addDays, payKey, payTypeMark } from '../format.js';
+import { icon } from '../icons.js';
 
 // Режим «Периодов»: на широком экране и масштабе < 150% — лента-прогноз за год
 // (скролл, навигация по годам); иначе (телефон ИЛИ 150%) — один месяц, навигация по месяцам.
 const isWide = () => window.matchMedia('(min-width: 1180px)').matches;
 export const isForecast = () => isWide() && S.zoomLevel < 1.5;
+
+// ── Сорт+фильтр (пункт 2 дорожной карты). Фильтр глобальный, сорт по-карточно —
+// оба в localStorage. Дефолтный порядок НЕ трогаем: сортировка включается только
+// явным тапом по колонке (1-й тап — направление, 2-й — обратное, 3-й — сброс). ──
+const PAY_TYPES = ['reg', 'inst', 'once', 'owed'];
+const TYPE_NAME = { reg: 'Постоянные', inst: 'Рассрочка', once: 'Разовые', owed: 'Мне должны' };
+const payTypeKey = p => (!p.regularId && !p.installmentId && p.amount < 0) ? 'owed'
+  : p.regularId ? 'reg' : p.installmentId ? 'inst' : 'once';
+
+function getFilter() {
+  try {
+    const a = JSON.parse(localStorage.getItem('payFilter'));
+    if (Array.isArray(a)) { const s = new Set(a.filter(t => PAY_TYPES.includes(t))); if (s.size) return s; }
+  } catch { /* нет/битое → показываем всё */ }
+  return new Set(PAY_TYPES);
+}
+function setFilter(set) {
+  if (set.size === 0 || set.size >= PAY_TYPES.length) localStorage.removeItem('payFilter'); // «всё» = без фильтра
+  else localStorage.setItem('payFilter', JSON.stringify([...set]));
+}
+function getSorts() { try { return JSON.parse(localStorage.getItem('paySort')) || {}; } catch { return {}; } }
+function setSort(period, s) {
+  const all = getSorts();
+  if (s) all[period] = s; else delete all[period];
+  localStorage.setItem('paySort', JSON.stringify(all));
+}
+// фильтр по типу + сорт по колонке (status/type/amount) для показа платежей периода
+function arrangePayments(list, filter, sort) {
+  let out = list.filter(p => filter.has(payTypeKey(p)));
+  if (sort) {
+    const ORDER = { reg: 0, inst: 1, once: 2, owed: 3 };
+    const val = p => sort.key === 'status' ? (p.paid ? 1 : 0)
+      : sort.key === 'type' ? ORDER[payTypeKey(p)] : p.amount;
+    out = [...out].sort((a, b) => (val(a) - val(b)) * (sort.dir === 'asc' ? 1 : -1));
+  }
+  return out;
+}
+function onSortClick(period, key) {
+  const cur = getSorts()[period];
+  const primary = key === 'amount' ? 'desc' : 'asc';       // логичный первый клик
+  let next;
+  if (!cur || cur.key !== key) next = { key, dir: primary };
+  else if (cur.dir === primary) next = { key, dir: primary === 'asc' ? 'desc' : 'asc' };
+  else next = null;                                        // третий клик — сброс к исходному порядку
+  setSort(period, next);
+  renderPeriods();
+}
+function openFilterModal() {
+  const cur = getFilter();
+  const opts = PAY_TYPES.map(t => `
+    <label class="filter-opt">
+      <input type="checkbox" data-ftype="${t}" ${cur.has(t) ? 'checked' : ''}>
+      <span class="pay-type ${t}">${icon(t)}</span> ${TYPE_NAME[t]}
+    </label>`).join('');
+  openModal(`
+    <h3>Показывать</h3>
+    <p class="hint">Какие платежи видны во всех периодах.</p>
+    <label class="filter-opt filter-all"><input type="checkbox" id="f-all" ${cur.size >= PAY_TYPES.length ? 'checked' : ''}> Всё</label>
+    <div class="filter-list">${opts}</div>
+    <div class="form-actions">
+      <button class="btn" id="f-cancel">Отмена</button>
+      <button class="btn primary" id="f-apply">Применить</button>
+    </div>`);
+  const boxes = () => [...document.querySelectorAll('#modal [data-ftype]')];
+  const allBox = $('#f-all');
+  const syncAll = () => { allBox.checked = boxes().every(b => b.checked); };
+  allBox.addEventListener('change', () => boxes().forEach(b => { b.checked = allBox.checked; }));
+  boxes().forEach(b => b.addEventListener('change', syncAll));
+  $('#f-cancel').onclick = closeModal;
+  $('#f-apply').onclick = () => {
+    setFilter(new Set(boxes().filter(b => b.checked).map(b => b.dataset.ftype)));
+    closeModal();
+    renderPeriods();
+  };
+}
 
 export function renderPeriods() {
   const forecast = isForecast();
@@ -32,13 +108,32 @@ export function renderPeriods() {
     return;
   }
   const today = todayISO();
-  const legend = `<div class="pay-legend">
-    <span><span class="pay-type">🔁</span> постоянный</span>
-    <span><span class="pay-type">💳</span> рассрочка</span>
-    <span><span class="pay-type">💵</span> разовый</span>
-    <span><span class="pay-type">🤝</span> мне должны</span>
+  const filter = getFilter();
+  const sorts = getSorts();
+  const legendOpen = localStorage.getItem('legendOpen') === '1';
+  const filterActive = filter.size < PAY_TYPES.length;
+  const filterLabel = !filterActive ? 'Фильтр'
+    : filter.size === 1 ? TYPE_NAME[[...filter][0]] : `${filter.size} типа`;
+  const toolbar = `<div class="pay-toolbar">
+    <details class="pay-legend" id="pay-legend"${legendOpen ? ' open' : ''}>
+      <summary>${icon('chevronRight', 'leg-caret')}Легенда</summary>
+      <div class="legend-items">
+        <span><span class="pay-type reg">${icon('reg')}</span> постоянный</span>
+        <span><span class="pay-type inst">${icon('inst')}</span> рассрочка</span>
+        <span><span class="pay-type once">${icon('once')}</span> разовый</span>
+        <span><span class="pay-type owed">${icon('owed')}</span> мне должны</span>
+      </div>
+    </details>
+    <button class="pay-toolbtn${filterActive ? ' act' : ''}" id="pay-filter-btn" title="Фильтр по типу">${icon('funnel')}<span>${filterLabel}</span></button>
   </div>`;
-  container.innerHTML = legend + days.map(d => periodCard(d, today)).join('');
+  container.innerHTML = toolbar + days.map(d => periodCard(d, today, filter, sorts)).join('');
+
+  // легенда свёрнута по умолчанию; запоминаем открыто/закрыто (иначе схлопывается на перерисовке)
+  const legendEl = container.querySelector('#pay-legend');
+  if (legendEl) legendEl.addEventListener('toggle', () => localStorage.setItem('legendOpen', legendEl.open ? '1' : '0'));
+  $('#pay-filter-btn')?.addEventListener('click', openFilterModal);
+  container.querySelectorAll('[data-sort]').forEach(btn =>
+    btn.addEventListener('click', () => onSortClick(btn.dataset.period, btn.dataset.sort)));
 
   container.querySelectorAll('input[type=checkbox][data-pay]').forEach(cb => {
     cb.addEventListener('change', () => togglePaid(cb.dataset.pay, cb.checked));
@@ -109,13 +204,16 @@ export function renderPeriods() {
   });
 }
 
-function periodCard(d, today) {
+function periodCard(d, today, filter, sorts) {
   const z = d.zone || { key: 'none', label: '—' };
   const pct = d.load == null ? '—' : Math.round(d.load * 100) + '%';
   const barW = d.load == null ? 0 : Math.min(100, d.load * 100);
   const isCurrent = d.period >= today && today > addDays(d.period, -16);
-  const payments = d.payments.map(p => paymentRow(d.period, p)).join('') ||
-    `<div class="empty small">Платежей нет</div>`;
+  const sort = sorts[d.period] || null;
+  const shown = arrangePayments(d.payments, filter, sort);
+  const sortHead = d.payments.length ? sortHeader(d.period, sort) : '';
+  const payments = shown.map(p => paymentRow(d.period, p)).join('') ||
+    `<div class="empty small">${d.payments.length ? 'Скрыто фильтром' : 'Платежей нет'}</div>`;
 
   const chips = Object.keys(d.bankTouched).sort().map(bank => {
     const due = d.perBank[bank] || 0;
@@ -130,7 +228,7 @@ function periodCard(d, today) {
       <div class="card-date">${fmtPeriod(d.period)}${isCurrent ? '<span class="now-dot" title="ближайший период"></span>' : ''}</div>
       <div class="head-right">
         <div class="badge zone-${z.key}">${pct} · ${z.label}</div>
-        <button class="icon-btn" title="Добавить платёж" data-add-pay="${d.period}">+</button>
+        <button class="icon-btn" title="Добавить платёж" data-add-pay="${d.period}">${icon('plus')}</button>
       </div>
     </header>
     <div class="bar"><div class="bar-fill zone-${z.key}" style="width:${barW}%"></div></div>
@@ -142,9 +240,25 @@ function periodCard(d, today) {
       <div><span class="lbl">Останется</span><span class="val ${d.leftover < 0 ? 'neg' : ''}">${fmtMoney(d.leftover)}</span></div>
       <div><span class="lbl">С переносом</span><span class="val ${d.carry < 0 ? 'neg' : ''}">${fmtMoney(d.carry)}</span></div>
     </div>
+    ${sortHead}
     <div class="payments">${payments}</div>
     ${chips ? `<div class="chips">${chips}</div>` : ''}
   </section>`;
+}
+
+// Заголовок-сортировка (по-карточно): статус / тип / сумма. Каретка ↑↓ на активной.
+function sortHeader(period, sort) {
+  const col = (key, inner, title) => {
+    const on = sort && sort.key === key;
+    const caret = on ? icon(sort.dir === 'asc' ? 'caretUp' : 'caretDown', 'sort-car') : '';
+    return `<button type="button" class="sort-col${on ? ' on' : ''}" data-sort="${key}" data-period="${period}" title="${title}">${inner}${caret}</button>`;
+  };
+  return `<div class="sort-head">
+    ${col('status', icon('status'), 'Сортировать по статусу (оплачен)')}
+    ${col('type', icon('typeList') + '<span>тип</span>', 'Сортировать по типу')}
+    <span class="sort-spacer"></span>
+    ${col('amount', '<span class="sort-rub">₽</span>', 'Сортировать по сумме')}
+  </div>`;
 }
 
 function paymentRow(period, p) {
@@ -162,7 +276,7 @@ function paymentRow(period, p) {
     <input type="checkbox" data-pay="${esc(`${period}|${payKey(p)}`)}" ${p.paid ? 'checked' : ''}>
     <span class="pay-main clickable" data-edit-pay="${esc(payKey(p))}" data-period="${period}" ${drag} title="${movable ? 'Тащи в другой период или кликни, чтобы править' : 'Править платёж'}">
       ${payTypeMark(p)}
-      <span class="pay-name">${esc(p.name)}${progress}${bank}</span>
+      <span class="pay-name"><span class="pn-text">${esc(p.name)}</span>${progress}${bank}</span>
       <span class="pay-amount ${p.amount < 0 ? 'neg' : ''}">${fmtMoney(p.amount)}</span>
     </span>
   </div>`;
@@ -248,7 +362,7 @@ function openPaymentForm(period, key) {
     ${isOneOff ? `
     <div class="chips" id="sign-toggle">
       <button type="button" class="chip pick ${owedDefault ? '' : 'sel'}" data-sign="expense">Трата</button>
-      <button type="button" class="chip pick ${owedDefault ? 'sel' : ''}" data-sign="owed">🤝 Мне должны</button>
+      <button type="button" class="chip pick ${owedDefault ? 'sel' : ''}" data-sign="owed">${icon('owed')} Мне должны</button>
     </div>
     <p class="hint" id="owe-hint" ${owedDefault ? '' : 'hidden'}>«Мне должны» — деньги, которые <b>вернутся</b>: уменьшат нагрузку периода.</p>` : ''}
     <div class="lbl-like">Банк</div>

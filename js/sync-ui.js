@@ -5,6 +5,7 @@
 import { S, adoptStateJSON } from './store.js';
 import { render } from './render.js';
 import { $, openModal, closeModal } from './dom.js';
+import { icon } from './icons.js';
 import { exportState, getKeyfile, setLock, clearSyncKey, hasVault, loadVault } from './db.js';
 import { deriveKeyRaw, importAesKey } from './crypto.js';
 import { SyncEngine } from './sync.js';
@@ -15,12 +16,13 @@ export function updateSyncStatusUI() {
   if (!el) return;
   const map = {
     off: ['—', ''], locked: ['🔒 заблокировано', 'off'],
-    syncing: ['⟳ синхронизация…', 'on'], synced: ['✓ синхронизировано', 'on'],
+    syncing: ['синхронизация…', 'on'], synced: ['✓ синхронизировано', 'on'],
     offline: ['⚠ сервер недоступен', 'warn'], conflict: ['⚠ был конфликт, взято свежее', 'warn'],
     error: ['⚠ ошибка', 'warn'],
   };
   const [text, cls] = map[S.syncStatus] || ['—', ''];
-  el.textContent = text;
+  if (S.syncStatus === 'syncing') el.innerHTML = '<span class="mini-spin" aria-hidden="true"></span> синхронизация…';
+  else el.textContent = text;
   el.className = 'keyfile-status ' + cls;
 }
 
@@ -37,18 +39,48 @@ export function createSyncEngine() {
   });
 }
 
-// Глобальная плашка связи: зелёная (на связи, авто-исчезает), красная (висит до восстановления).
-let toastTimer = null;
-let prevConn = null; // synced | offline | error — для показа «зелёной» только при первом/после сбоя
-export function showToast(kind, text, autohideMs) {
+// Глобальная плашка связи: [точка][текст][×]. Зелёная/жёлтая авто-исчезают,
+// красная висит до восстановления; если закрыть красную крестиком — вернётся через 30с.
+let toastTimer = null;        // авто-скрытие
+let reappearTimer = null;     // возврат «красной» после закрытия крестиком
+let prevConn = null;          // synced | offline | error — «зелёную» показываем только при первом/после сбоя
+let sticky = null;            // {kind,text} последней висящей (bad) плашки — для возврата через 30с
+
+function renderToast(kind, text) {
   const el = $('#toast');
-  if (!el) return;
-  el.textContent = text;
+  if (!el) return null;
+  el.innerHTML = `<span class="toast-dot"></span><span class="toast-msg"></span><button class="toast-x" type="button" aria-label="Закрыть">${icon('x')}</button>`;
+  const msg = el.querySelector('.toast-msg');
+  msg.textContent = text; msg.title = text;          // одна строка + ellipsis; полный текст — в title
   el.className = 'toast show ' + kind;
-  clearTimeout(toastTimer);
+  el.querySelector('.toast-x').onclick = () => dismissToast(kind);
+  return el;
+}
+export function showToast(kind, text, autohideMs) {
+  clearTimeout(toastTimer); clearTimeout(reappearTimer);
+  const el = renderToast(kind, text);
+  if (!el) return;
+  sticky = kind === 'bad' ? { kind, text } : null;   // висящая проблема — помним для возврата
   if (autohideMs) toastTimer = setTimeout(() => el.classList.remove('show'), autohideMs);
 }
-export function hideToast() { const el = $('#toast'); if (el) { clearTimeout(toastTimer); el.classList.remove('show'); } }
+export function hideToast() {
+  const el = $('#toast');
+  clearTimeout(toastTimer); clearTimeout(reappearTimer); sticky = null;
+  if (el) el.classList.remove('show');
+}
+// Крестик: гасим. Красную (bad) возвращаем через 30с, если проблема ещё жива
+// (sticky не сброшен переходом в synced/off/locked).
+function dismissToast(kind) {
+  const el = $('#toast');
+  clearTimeout(toastTimer); clearTimeout(reappearTimer);
+  if (el) el.classList.remove('show');
+  if (kind === 'bad' && sticky) {
+    const again = sticky;
+    reappearTimer = setTimeout(() => {
+      if (sticky && sticky.text === again.text) showToast(again.kind, again.text, 0);
+    }, 30000);
+  }
+}
 export function updateConnBanner(s) {
   if (s === 'syncing') return;                       // транзиентное — не трогаем плашку
   if (s === 'off' || s === 'locked') { hideToast(); prevConn = null; return; }
@@ -58,7 +90,7 @@ export function updateConnBanner(s) {
     prevConn = 'synced'; return;
   }
   if (s === 'offline') { showToast('bad', 'Синхронизация приостановлена', 0); prevConn = 'offline'; return; }
-  if (s === 'error')   { showToast('bad', '⚠ Не удалось расшифровать — проверь пароль/keyfile', 0); prevConn = 'error'; return; }
+  if (s === 'error')   { showToast('bad', 'Не удалось расшифровать — проверь пароль/keyfile', 0); prevConn = 'error'; return; }
 }
 
 // Включение замка (Шаг 5): двухшаговая модалка. Шаг 1 — пароль в поле окна (не системный
@@ -131,7 +163,7 @@ export function runLockGate(lock) {
     ov.className = 'lock-overlay';
     ov.innerHTML = `
       <div class="lock-box">
-        <div class="lock-logo">🔒</div>
+        <div class="lock-logo">${icon('lock')}</div>
         <div class="lock-title">Нагрузка</div>
         <div class="lock-status" id="lock-status"></div>
         <button class="btn primary" id="lock-bio" hidden>Повторить · Face / Touch ID</button>
