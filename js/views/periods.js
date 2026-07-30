@@ -4,7 +4,7 @@
 
 import { S, putRecord, deleteRecord, putInstallment } from '../store.js';
 import { render } from '../render.js';
-import { $, esc, uid, parseMoney, moneyInput, openModal, closeModal } from '../dom.js';
+import { $, esc, uid, parseMoney, moneyInput, openModal, closeModal, navGutter } from '../dom.js';
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
 import { generatePeriods, fmtMoney, fmtPeriod, fmtMonth } from '../engine.js';
 import { todayISO, horizonEnd, fmtPeriodFull, addDays, payKey, payTypeMark } from '../format.js';
@@ -12,7 +12,10 @@ import { icon } from '../icons.js';
 
 // Режим «Периодов»: на широком экране и масштабе < 150% — лента-прогноз за год
 // (скролл, навигация по годам); иначе (телефон ИЛИ 150%) — один месяц, навигация по месяцам.
-const isWide = () => window.matchMedia('(min-width: 1180px)').matches;
+// Меряем ширину, доступную КОНТЕНТУ (окно минус левое меню), а не ширину окна:
+// с открытым меню на 1280px под ленту года места уже нет. navGutter() = 0, когда
+// меню внизу панелью, — тогда поведение ровно прежнее.
+const isWide = () => window.innerWidth - navGutter() >= 1180;
 export const isForecast = () => isWide() && S.zoomLevel < 1.5;
 
 // ── Сорт+фильтр (пункт 2 дорожной карты). Фильтр глобальный, сорт по-карточно —

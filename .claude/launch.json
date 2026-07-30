@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "nagruzka",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8137", "--directory", "/Users/secktant/Projects/nagruzka/app"],
+      "port": 8137
+    }
+  ]
+}
