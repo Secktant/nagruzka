@@ -4,6 +4,19 @@
 
 export const $ = sel => document.querySelector(sel);
 export const $$ = sel => [...document.querySelectorAll(sel)];
+
+// ── ширина, занятая левым меню ──
+// Нужна тем, кто выбирает раскладку по ширине (views/periods.js): медиазапрос
+// меряет ОКНО, а контенту достаётся окно минус меню — иначе на 1280px включится
+// лента-прогноз, для которой места уже нет. Значения обязаны совпадать с
+// --nav-w в style.css (медиазапрос не отдаёт свою ширину в JS).
+export const NAV_BREAKPOINT = 1024;   // ниже — меню панелью внизу, ширину не ест
+export function navGutter() {
+  if (!window.matchMedia(`(min-width: ${NAV_BREAKPOINT}px)`).matches) return 0;
+  // --ui-scale выставляется инлайном в app.js (число), поэтому читается как есть
+  const scale = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui-scale')) || 1;
+  return (document.documentElement.classList.contains('nav-collapsed') ? 56 : 184) * scale;
+}
 export const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 export const uid = p => `${p}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 

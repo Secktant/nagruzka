@@ -18,6 +18,10 @@ import { S } from './store.js';
 
 // ───────────────────────── запуск ─────────────────────────
 
+// Свёрнутое левое меню — класс на <html> (им же управляет CSS и navGutter()).
+// Ставим до первой отрисовки; экран закрыт стартовым лоадером, так что мигания нет.
+if (localStorage.getItem('navCollapsed')) document.documentElement.classList.add('nav-collapsed');
+
 function shiftMonth(delta) {
   S.view.m += delta;
   if (S.view.m < 1) { S.view.m = 12; S.view.y--; }
@@ -90,9 +94,19 @@ async function main() {
     localStorage.setItem('zoom', String(z));
     return z;
   }
-  // меняем масштаб и, если открыты «Периоды», перерисовываем (на пороге 150% меняется раскладка)
-  const setZoom = z => { zoom = applyZoom(z); if (S.view.tab === 'periods') renderPeriods(); };
+  // Порог «узко ↔ широко» зависит и от окна, и от ширины меню (см. navGutter), поэтому
+  // следим не за медиазапросом, а за самим решением isForecast(). force — когда
+  // перерисовать надо в любом случае (масштаб: на пороге 150% меняется раскладка).
+  let wasForecast;
+  const syncLayout = (force = false) => {
+    const f = isForecast();
+    const flipped = f !== wasForecast;
+    wasForecast = f;
+    if ((flipped || force) && S.view.tab === 'periods') renderPeriods();
+  };
+  const setZoom = z => { zoom = applyZoom(z); syncLayout(true); };
   let zoom = applyZoom(parseFloat(localStorage.getItem('zoom')) || 1);
+  wasForecast = isForecast();                 // масштаб уже применён — решение достоверно
   $('#zoom-in').onclick = () => setZoom(zoom + 0.1);
   $('#zoom-out').onclick = () => setZoom(zoom - 0.1);
   // хоткеи Cmd/Ctrl +/−/0 ведём через НАШ масштаб (и глушим браузерный зум,
@@ -106,10 +120,25 @@ async function main() {
   $$('.tab').forEach(t => t.addEventListener('click', () => { S.view.tab = t.dataset.tab; render(); }));
   $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
   $('#modal-close').onclick = closeModal;
-  // пересечение порога ширины (узкий ↔ широкий) — перерисовать «Периоды» в нужном режиме
-  window.matchMedia('(min-width: 1180px)').addEventListener('change', () => {
-    if (S.view.tab === 'periods') renderPeriods();
-  });
+
+  window.addEventListener('resize', () => syncLayout());
+
+  // сворачивание левого меню (в режиме нижней панели кнопка скрыта CSS-ом)
+  const navToggle = $('#nav-toggle');
+  const labelNavToggle = () => {
+    const collapsed = document.documentElement.classList.contains('nav-collapsed');
+    const label = collapsed ? 'Развернуть меню' : 'Свернуть меню';
+    navToggle.setAttribute('aria-expanded', String(!collapsed));
+    navToggle.setAttribute('aria-label', label);
+    navToggle.title = label;
+  };
+  labelNavToggle();                       // состояние могло прийти из localStorage
+  navToggle.onclick = () => {
+    const collapsed = document.documentElement.classList.toggle('nav-collapsed');
+    localStorage.setItem('navCollapsed', collapsed ? '1' : '');
+    labelNavToggle();
+    syncLayout();   // изменилась доступная ширина — вдруг сменился режим «Периодов»
+  };
   wireMoneyInputs(document);
   render();
   showVersion();

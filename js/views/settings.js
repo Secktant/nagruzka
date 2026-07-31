@@ -1,16 +1,15 @@
-// Вкладка «Настройки»: зарплата, регулярные платежи (+форма), банки, экспорт/импорт
-// (только шифрованный .nz — plaintext-JSON убран как небезопасный), keyfile, Sync ID,
-// синхронизация, замок. Хендлеры мутируют
+// Вкладка «Настройки»: экспорт/импорт (только шифрованный .nz — plaintext-JSON убран
+// как небезопасный), keyfile, Sync ID, синхронизация, замок. Хендлеры мутируют
 // S и зовут render(); включение/выключение синка и замка — через sync-ui.
+// Зарплата, регулярные платежи и банки уехали во вкладку «Деньги» (views/money.js) —
+// это данные, а не настройки приложения; здесь остался только «системный» слой.
 // ВНИМАНИЕ БЕЗОПАСНОСТИ: логика ключей/сейфа перенесена ДОСЛОВНО — не менять при распиле.
 
-import { S, markDirty, adoptStateJSON, putRegular, deleteRegular, putSettings } from '../store.js';
+import { S, markDirty, adoptStateJSON } from '../store.js';
 import { render } from '../render.js';
-import { $, $$, esc, uid, parseMoney, moneyInput, openModal, closeModal, withBusy } from '../dom.js';
-import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
+import { $, esc, parseMoney, withBusy } from '../dom.js';
 import { icon } from '../icons.js';
-import { generatePeriods, fmtMoney } from '../engine.js';
-import { todayISO, horizonEnd } from '../format.js';
+import { todayISO } from '../format.js';
 import { generateKeyfile, encryptText, encryptTextWithKey, decryptToText, inspect } from '../crypto.js';
 import { isConfigured as syncConfigured, generateSyncId, isValidSyncId, deriveChunkId, CHUNK_NAGRUZKA } from '../sync.js';
 import { createSyncEngine, updateSyncStatusUI, openLockSetup } from '../sync-ui.js';
@@ -23,10 +22,15 @@ import {
   getLock, setLock, clearLock,
 } from '../db.js';
 
+// <input type="file"> НЕ шлёт change, если выбран тот же самый файл, что и в прошлый раз.
+// На успешном пути инпут пересоздаётся вызовом render(), а на неудачном (неверный пароль,
+// чужой файл, отказ от замены) — оставался с прежним значением, и повторная попытка с ТЕМ ЖЕ
+// файлом молча не срабатывала до перезагрузки страницы. Поэтому чистим value всегда.
+function resetFileInput(input) {
+  if (input) input.value = '';
+}
+
 export async function renderSettings() {
-  const regs = S.state.regulars.filter(r => r.kind === 'expense');
-  const salary = S.state.regulars.find(r => r.kind === 'income');
-  const schedName = { both: 'каждый период', mid: '15-е число', end: 'конец месяца' };
   const kf = await getKeyfile(S.db); // Uint8Array | undefined
   const sid = await getSyncId(S.db); // base64url-строка | undefined
 
@@ -49,38 +53,6 @@ export async function renderSettings() {
 
   $('#view-settings').innerHTML = `
     <div class="section-head"><h2>Настройки</h2></div>
-
-    <section class="card">
-      <h3>Зарплата</h3>
-      <label class="inline-label">Сумма за период, ₽
-        ${moneyInput('', salary?.amount ?? 70000, 'id="salary-input"')}
-      </label>
-      <p class="hint">Подставляется в каждый период (15-е и конец месяца). Факт правится в самом периоде.</p>
-    </section>
-
-    <section class="card">
-      <div class="section-head"><h3>Регулярные платежи</h3>
-        <button class="btn" id="add-regular">+ добавить</button></div>
-      ${regs.map(r => `
-        <div class="pay ${r.active ? '' : 'paid'} clickable" data-reg="${r.id}">
-          <span class="pay-main">
-            <span class="pay-name"><span class="pn-text">${esc(r.name)}</span>
-              <span class="bank-tag">${schedName[r.schedule]}</span>
-              ${r.bank ? `<span class="bank-tag">${esc(r.bank)}</span>` : ''}
-              ${r.active ? '' : '<span class="bank-tag">выключен</span>'}</span>
-            <span class="pay-amount">${fmtMoney(r.amount)}</span>
-          </span>
-        </div>`).join('') || '<div class="empty small">Пока пусто</div>'}
-      <p class="hint">Изменение суммы влияет только на будущие периоды — история уже записана.</p>
-    </section>
-
-    <section class="card">
-      <h3>Банки</h3>
-      <div class="chips" id="settings-banks">
-        ${S.state.settings.banks.map(b => `<span class="chip">${esc(b)} <button class="chip-x" data-rm-bank="${esc(b)}">×</button></span>`).join('')}
-        <button type="button" class="chip pick add" id="settings-add-bank">+ банк</button>
-      </div>
-    </section>
 
     <section class="card">
       <h3>Резервная копия · синхронизация</h3>
@@ -136,18 +108,6 @@ export async function renderSettings() {
     </section>` : ''}
     ${lockCard}`;
 
-  $('#salary-input').addEventListener('input', async e => {
-    const v = parseMoney(e.target.value);
-    if (!(v > 0) || !salary) return;
-    salary.amount = v;
-    await putRegular(S.db, salary); // без render — не теряем фокус при наборе
-  });
-
-  $('#add-regular').onclick = () => openRegularForm(null);
-  $$('#view-settings [data-reg]').forEach(el => {
-    el.addEventListener('click', () => openRegularForm(el.dataset.reg));
-  });
-
   // Замок (Шаг 5): включение через модалку (пароль в окне + Face ID по отдельной кнопке —
   // иначе iOS Safari бросает «document is not focused» на create() после нативного prompt).
   if ($('#lock-enable')) $('#lock-enable').onclick = () => openLockSetup();
@@ -158,24 +118,6 @@ export async function renderSettings() {
     alert('Замок выключен.');
     render();
   };
-
-  $('#settings-banks').addEventListener('click', async e => {
-    if (e.target.id === 'settings-add-bank') {
-      const name = prompt('Название банка');
-      if (!name || !name.trim()) return;
-      if (!S.state.settings.banks.includes(name.trim())) {
-        S.state.settings.banks.push(name.trim());
-        await putSettings(S.db, S.state.settings);
-      }
-      render();
-    }
-    const rm = e.target.dataset.rmBank;
-    if (rm && confirm(`Убрать банк «${rm}» из списка? Старые платежи не изменятся.`)) {
-      S.state.settings.banks = S.state.settings.banks.filter(b => b !== rm);
-      await putSettings(S.db, S.state.settings);
-      render();
-    }
-  });
 
   // --- keyfile (второй фактор) ---
   const downloadBytes = (bytes, name, type = 'application/octet-stream') => {
@@ -203,17 +145,22 @@ export async function renderSettings() {
   };
   $('#kf-load').onclick = () => $('#kf-file').click();
   $('#kf-file').addEventListener('change', async e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    if (bytes.length !== 32) {
-      alert('Это не похоже на keyfile «Нагрузки» (ожидается 32 байта).');
-      return;
+    const input = e.target;
+    try {
+      const file = input.files[0];
+      if (!file) return;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (bytes.length !== 32) {
+        alert('Это не похоже на keyfile «Нагрузки» (ожидается 32 байта).');
+        return;
+      }
+      await setKeyfile(S.db, bytes);
+      S.currentKeyfile = bytes;
+      alert('keyfile загружен ✓');
+      render();
+    } finally {
+      resetFileInput(input);
     }
-    await setKeyfile(S.db, bytes);
-    S.currentKeyfile = bytes;
-    alert('keyfile загружен ✓');
-    render();
   });
 
   // --- зашифрованная копия ---
@@ -278,6 +225,8 @@ export async function renderSettings() {
       alert('Импорт выполнен ✓');
     } catch (err) {
       alert(err.message);
+    } finally {
+      resetFileInput(e.target);
     }
   });
 
@@ -379,75 +328,3 @@ export async function renderSettings() {
   }
 }
 
-function openRegularForm(regId) {
-  const reg = regId ? S.state.regulars.find(r => r.id === regId) : null;
-  const isNew = !reg;
-
-  openModal(`
-  <form id="reg-form" class="form">
-    <h3>${isNew ? 'Новый регулярный платёж' : esc(reg.name)}</h3>
-    <label>Название
-      <input name="name" required value="${esc(reg?.name || '')}" placeholder="Интернет">
-    </label>
-    <div class="row2">
-      <label>Сумма, ₽
-        ${moneyInput('amount', reg?.amount ?? '', '')}
-      </label>
-      <label>Когда
-        <select name="schedule">
-          <option value="mid" ${reg?.schedule === 'mid' ? 'selected' : ''}>15-е число</option>
-          <option value="end" ${reg?.schedule === 'end' ? 'selected' : ''}>конец месяца</option>
-          <option value="both" ${reg?.schedule === 'both' ? 'selected' : ''}>каждый период</option>
-        </select>
-      </label>
-    </div>
-    <label class="check-label">
-      <input type="checkbox" name="active" ${reg?.active !== false ? 'checked' : ''}> Активен
-    </label>
-    ${isNew ? '<p class="hint">Новый платёж появится только в будущих периодах — прошлое не трогаем.</p>' : ''}
-    <div class="lbl-like">Банк</div>
-    ${bankChipsHTML(reg?.bank || null)}
-    <div class="form-actions">
-      ${!isNew ? `<button type="button" class="btn danger" id="reg-delete">Удалить</button>` : ''}
-      <span class="spacer"></span>
-      <button type="button" class="btn" id="modal-cancel">Отмена</button>
-      <button class="btn primary">Сохранить</button>
-    </div>
-  </form>`);
-
-  wireBankChips();
-  $('#modal-cancel').onclick = closeModal;
-
-  const delBtn = $('#reg-delete');
-  if (delBtn) delBtn.onclick = async () => {
-    if (!confirm(`Удалить «${reg.name}»? История останется, будущие периоды очистятся.`)) return;
-    S.state.regulars = S.state.regulars.filter(r => r.id !== reg.id);
-    await deleteRegular(S.db, reg.id);
-    closeModal(); render();
-  };
-
-  $('#reg-form').onsubmit = async e => {
-    e.preventDefault();
-    const f = e.target;
-    const data = {
-      name: f.name.value.trim(),
-      amount: parseMoney(f.amount.value),
-      schedule: f.schedule.value,
-      active: f.active.checked,
-      bank: selectedBank(),
-    };
-    if (!data.name || !Number.isFinite(data.amount)) return;
-    if (isNew) {
-      // новый регулярный действует только с ближайшего будущего периода
-      const since = generatePeriods(todayISO().slice(0, 7) + '-01', horizonEnd())
-        .find(p => p >= todayISO());
-      const rec = { id: uid('reg'), kind: 'expense', since, ...data };
-      S.state.regulars.push(rec);
-      await putRegular(S.db, rec);
-    } else {
-      Object.assign(reg, data);
-      await putRegular(S.db, reg);
-    }
-    closeModal(); render();
-  };
-}

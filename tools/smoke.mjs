@@ -54,7 +54,10 @@ try {
   const checks = [
     ['Долги', '#view-debts', (t) => t.includes('Долги') || t.includes('рассроч')],
     ['График', '#view-chart', null, async () => (await page.$$('#view-chart svg')).length >= 1],
-    ['Настройки', '#view-settings', null, async () => (await page.$$('#view-settings h3')).length >= 3],
+    // «Деньги» — зарплата, регулярные, банки (3 карточки). «Настройки» после распила
+    // содержат бэкап + синк; замок рисуется только при заведённом ключе, поэтому >= 2.
+    ['Деньги', '#view-money', null, async () => (await page.$$('#view-money h3')).length >= 3],
+    ['Настройки', '#view-settings', null, async () => (await page.$$('#view-settings h3')).length >= 2],
     ['Периоды', '#view-periods', (t) => t.length > 30],
   ];
   for (const [label, sel, textCheck, elCheck] of checks) {

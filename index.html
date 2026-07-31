@@ -44,14 +44,22 @@
     <div id="view-periods" class="view"><div id="periods"></div></div>
     <div id="view-debts" class="view" hidden></div>
     <div id="view-chart" class="view" hidden></div>
+    <div id="view-money" class="view" hidden></div>
     <div id="view-settings" class="view" hidden></div>
   </div>
 
-  <nav class="tabbar">
-    <button class="tab active" data-tab="periods"><span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9h18M8 2.5v4M16 2.5v4"/></svg></span>Периоды</button>
-    <button class="tab" data-tab="debts"><span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5.5" width="19" height="13" rx="2.5"/><path d="M2.5 10h19"/></svg></span>Долги</button>
-    <button class="tab" data-tab="chart"><span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M6 16l4-5 3.5 3L20 6"/></svg></span>График</button>
-    <button class="tab" data-tab="settings"><span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 4.3c.4-1.8 2.9-1.8 3.3 0a1.7 1.7 0 0 0 2.6 1.1c1.5-.9 3.3.8 2.4 2.4a1.7 1.7 0 0 0 1 2.5c1.8.4 1.8 2.9 0 3.3a1.7 1.7 0 0 0-1 2.6c.9 1.5-.8 3.3-2.4 2.4a1.7 1.7 0 0 0-2.6 1c-.4 1.8-2.9 1.8-3.3 0a1.7 1.7 0 0 0-2.6-1c-1.5.9-3.3-.8-2.4-2.4a1.7 1.7 0 0 0-1-2.6c-1.8-.4-1.8-2.9 0-3.3a1.7 1.7 0 0 0 1-2.5c-.9-1.6.9-3.3 2.4-2.4a1.7 1.7 0 0 0 2.6-1.1z"/><circle cx="12" cy="12" r="3"/></svg></span>Настройки</button>
+  <!-- Одна навигация на оба режима: снизу панель (телефон/узкое окно), слева колонка
+       (широкое окно, см. медиазапрос .tabbar в style.css). Кнопки остаются
+       .tab[data-tab] — обвязка в app.js/render.js от режима не зависит.
+       .nav-brand/.nav-toggle видны только в режиме колонки. -->
+  <nav class="tabbar" aria-label="Разделы">
+    <div class="nav-brand">Нагрузка</div>
+    <button class="tab active" data-tab="periods" aria-label="Периоды"><span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="2.5"/><path d="M3 9h18M8 2.5v4M16 2.5v4"/></svg></span><span class="lbl">Периоды</span></button>
+    <button class="tab" data-tab="debts" aria-label="Долги"><span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="5.5" width="19" height="13" rx="2.5"/><path d="M2.5 10h19"/></svg></span><span class="lbl">Долги</span></button>
+    <button class="tab" data-tab="chart" aria-label="График"><span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20h18M6 16l4-5 3.5 3L20 6"/></svg></span><span class="lbl">График</span></button>
+    <button class="tab" data-tab="money" aria-label="Деньги"><span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8a2.5 2.5 0 0 1 2.5-2.5H17V8"/><rect x="3" y="8" width="18" height="11.5" rx="2.5"/><circle cx="16.5" cy="13.75" r="1.15"/></svg></span><span class="lbl">Деньги</span></button>
+    <button class="tab" data-tab="settings" aria-label="Настройки"><span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M10.3 4.3c.4-1.8 2.9-1.8 3.3 0a1.7 1.7 0 0 0 2.6 1.1c1.5-.9 3.3.8 2.4 2.4a1.7 1.7 0 0 0 1 2.5c1.8.4 1.8 2.9 0 3.3a1.7 1.7 0 0 0-1 2.6c.9 1.5-.8 3.3-2.4 2.4a1.7 1.7 0 0 0-2.6 1c-.4 1.8-2.9 1.8-3.3 0a1.7 1.7 0 0 0-2.6-1c-1.5.9-3.3-.8-2.4-2.4a1.7 1.7 0 0 0-1-2.6c-1.8-.4-1.8-2.9 0-3.3a1.7 1.7 0 0 0 1-2.5c-.9-1.6.9-3.3 2.4-2.4a1.7 1.7 0 0 0 2.6-1.1z"/><circle cx="12" cy="12" r="3"/></svg></span><span class="lbl">Настройки</span></button>
+    <button class="nav-toggle" id="nav-toggle" type="button" aria-expanded="true" aria-label="Свернуть меню" title="Свернуть меню"><span class="ico"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg></span><span class="lbl">Свернуть</span></button>
   </nav>
 
   <div id="app-version" aria-hidden="true"></div>
@@ -63,9 +71,6 @@
     <div id="modal-body"></div>
   </dialog>
 
-  <!-- Argon2 (hash-wasm 4.12.0, UMD): задаёт globalThis.hashwasm для js/crypto.js.
-       integrity (SRI): браузер сверит хеш и НЕ выполнит файл, если он изменён.
-       SHA-256: dcec617a2e1b700fa132d1583a186cb70611113395e869f2dd6cc82b415d3094 -->
   <script src="js/vendor/argon2.umd.min.js"
           integrity="sha384-tP0Wy54CKmng7i9EoTlPySD0hBx6Octj0VS6MfwlnUu111MPa+JLm0CCbep6XJ1W"></script>
   <script type="module" src="js/app.js"></script>

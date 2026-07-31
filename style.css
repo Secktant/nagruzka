@@ -10,6 +10,11 @@
   --yellow: #e0b341;
   --red: #e26d5a;
   --over: #c33c54;
+  /* Ширина левого меню. 0 = меню внизу панелью (телефон/узкое окно); в режиме
+     колонки задаётся медиазапросом .tabbar внизу файла. Контент отодвигается на
+     эту величину (body padding-left), поэтому она же — «съеденная» ширина.
+     ВАЖНО: значения дублируются в js/dom.js → navGutter(), менять парой. */
+  --nav-w: 0px;
   color-scheme: dark;
 }
 
@@ -291,6 +296,7 @@ body {
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .chip {
+  font-family: inherit;      /* часть чипов — <button>, у них свой дефолтный шрифт */
   font-size: 12.5px;
   font-weight: 600;
   padding: 5px 11px;
@@ -300,6 +306,44 @@ body {
 }
 .chip.due  { color: #ffd49c; border-color: rgba(255,212,156,.25); }
 .chip.done { color: var(--green); border-color: rgba(63,185,106,.25); }
+
+/* Тап по банку подсвечивает его платежи в этой карточке, остальные приглушает.
+   Не фильтр: строки остаются на месте, поэтому итог «Платежи» в шапке карточки
+   продолжает сходиться с тем, что видно. */
+.bank-chip { cursor: pointer; }
+.bank-chip.sel { border-color: var(--accent); color: var(--accent); background: rgba(110,168,254,.12); }
+.pay.bank-hl  { background: rgba(110,168,254,.10); border-radius: 8px; }
+.pay.bank-dim { opacity: .32; }
+.pay.bank-hl, .pay.bank-dim { transition: opacity .15s ease, background-color .15s ease; }
+
+/* ── Долги: итоги сверху + свёрнутый блок закрытых ── */
+.debt-totals { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.dt-cell {
+  flex: 1 1 190px;
+  background: var(--surface-2);
+  border-radius: 12px;
+  padding: 10px 13px;
+}
+.dt-lbl { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+.dt-val { display: block; font-size: 19px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.dt-sub { display: block; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+.debt-closed { margin-top: 4px; }
+.debt-closed > summary {
+  display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer; user-select: none; list-style: none;
+  padding: 6px 2px; width: max-content;
+  color: var(--muted); font-size: 14px; font-weight: 600;
+}
+.debt-closed > summary::-webkit-details-marker { display: none; }
+.debt-closed .leg-caret { transition: transform .15s; color: var(--muted); }
+.debt-closed[open] > summary .leg-caret { transform: rotate(90deg); }
+.dc-count {
+  font-size: 11.5px; font-weight: 600;
+  background: var(--surface-2); color: var(--muted);
+  border-radius: 999px; padding: 1px 8px;
+}
+.dc-body { margin-top: 6px; }
 
 .empty { color: var(--muted); padding: 24px; text-align: center; }
 .empty.small { padding: 10px 2px; text-align: left; }
@@ -749,6 +793,98 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .tab .ico { font-size: calc(19px * var(--ui-scale, 1)); }
 .tab.active { color: var(--accent); }
 .tab[disabled] { opacity: .45; cursor: default; }
+/* заголовок и «свернуть» — только в режиме колонки */
+.nav-brand, .nav-toggle { display: none; }
+
+/* ── Меню слева (широкое окно) ────────────────────────────────────────────────
+   Тот же элемент .tabbar, что и нижняя панель: перекладываем CSS-ом, разметка и
+   обработчики (app.js: $$('.tab'), render.js: .active) не знают о режиме.
+   Масштаб — через --ui-scale, а не zoom: элемент fixed (см. коммент у .tabbar).
+   Свёрнутое состояние — класс nav-collapsed на <html> (app.js, localStorage). */
+@media (min-width: 1024px) {
+  :root { --nav-w: calc(184px * var(--ui-scale, 1)); }
+  :root.nav-collapsed { --nav-w: calc(56px * var(--ui-scale, 1)); }
+
+  /* отступ анимируем синхронно с шириной меню — иначе контент прыгает раньше,
+     чем колонка доедет */
+  body { padding-left: var(--nav-w); transition: padding-left .18s ease; }
+  /* низ больше не занят панелью — снимаем резерв под неё */
+  .shell { padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+  .topbar .brand { display: none; }               /* название переехало в меню */
+  #app-version { bottom: calc(env(safe-area-inset-bottom) + 10px); }
+
+  .tabbar {
+    top: 0; bottom: 0; right: auto;
+    width: var(--nav-w);
+    flex-direction: column;
+    justify-content: flex-start;
+    gap: calc(2px * var(--ui-scale, 1));
+    border-top: none;
+    border-right: 1px solid var(--border);
+    padding:
+      calc(14px * var(--ui-scale, 1) + env(safe-area-inset-top))
+      calc(10px * var(--ui-scale, 1))
+      calc(12px * var(--ui-scale, 1) + env(safe-area-inset-bottom))
+      calc(10px * var(--ui-scale, 1) + env(safe-area-inset-left));
+    transition: width .18s ease;
+  }
+  .nav-brand {
+    display: block;
+    font-size: calc(16px * var(--ui-scale, 1));
+    font-weight: 600;
+    padding: calc(4px * var(--ui-scale, 1)) calc(8px * var(--ui-scale, 1)) calc(14px * var(--ui-scale, 1));
+    white-space: nowrap; overflow: hidden;
+  }
+  .tab, .nav-toggle {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    width: 100%;
+    gap: calc(10px * var(--ui-scale, 1));
+    padding: calc(9px * var(--ui-scale, 1)) calc(8px * var(--ui-scale, 1));
+    border-radius: calc(10px * var(--ui-scale, 1));
+    font-size: calc(13px * var(--ui-scale, 1));
+    white-space: nowrap; overflow: hidden;
+  }
+  .tab:hover, .nav-toggle:hover { background: var(--surface); }
+  .tab.active { background: var(--surface-2); }
+  /* иконки не должны схлопываться при сужении колонки */
+  .tab .ico, .nav-toggle .ico { flex: none; width: calc(20px * var(--ui-scale, 1)); }
+
+  .nav-toggle {
+    display: flex;
+    margin-top: auto;                              /* прижать к низу колонки */
+    background: none; border: none;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  /* свёрнуто: только иконки; подписи и название убираем из потока */
+  /* .lbl скоупим на меню: тот же класс носят подписи в .stats (ДОХОД/ПЛАТЕЖИ…),
+     без .tabbar свёрнутое меню гасило бы и их. */
+  :root.nav-collapsed .tabbar .lbl,
+  :root.nav-collapsed .nav-brand { display: none; }
+  :root.nav-collapsed .tab,
+  :root.nav-collapsed .nav-toggle { justify-content: center; padding-left: 0; padding-right: 0; }
+  :root.nav-collapsed .nav-toggle .ico { transform: scaleX(-1); }
+}
+@media (min-width: 1024px) and (prefers-reduced-motion: reduce) {
+  .tabbar, body { transition: none; }
+}
+
+/* Нижняя панель: делим ширину поровну вместо фиксированных отступов — с пятью
+   разделами (появились «Деньги») жёсткие 18px по бокам давали 402px при экране 375
+   и панель уезжала в горизонтальный скролл. Строго ниже брейкпоинта колонки:
+   в режиме меню-слева контейнер вертикальный, и flex:1 растянул бы кнопки по высоте. */
+@media (max-width: 1023px) {
+  .tabbar .tab {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-left: calc(2px * var(--ui-scale, 1));
+    padding-right: calc(2px * var(--ui-scale, 1));
+  }
+  .tabbar .lbl { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
 
 @media (max-width: 740px) {
   .stats { grid-template-columns: repeat(2, 1fr); row-gap: 10px; }
@@ -760,13 +896,17 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 /* Десктоп: на экране «Периоды» снимаем ограничение ширины, чтобы лента карточек
    заняла всё окно (сетка #periods сама даёт «сколько влезет» колонок). Только когда
    видны Периоды (:has) — остальные вкладки остаются компактными. Нет :has → 920px. */
-@media (min-width: 1180px) {
-  /* один месяц @150%: zoom ужимает логич. ширину, поэтому даём ~1120px → ровно 2 колонки. */
-  .shell:has(#view-periods:not([hidden])) { max-width: 1120px; }
+@media (min-width: 1024px) {
+  /* Один месяц (НЕ прогноз) — это ровно 2 карточки, и ширину даём под них: иначе
+     auto-fit держит третью колонку (тулбар «Легенда/Фильтр» растянут на всю строку,
+     поэтому пустых дорожек для схлопывания нет) и справа зияет дыра.
+     748px = 2×358 + gap. Множитель --ui-scale: .view масштабируется zoom-ом, значит
+     логическая ширина = физическая / масштаб. На 150% даёт 1122px — прежнее поведение. */
+  .shell:has(#view-periods:not([hidden])) { max-width: calc(748px * var(--ui-scale, 1)); }
   /* режим прогноза (лента года) — широко, колонок «сколько влезет». */
   .shell.forecast-mode:has(#view-periods:not([hidden])) { max-width: 1760px; }
 
-  /* Одиночный месяц @150% (широкий экран, НЕ прогноз): в месяце ровно 2 карточки =
+  /* Одиночный месяц (широкий экран, НЕ прогноз): в месяце ровно 2 карточки =
      один ряд грида, растягиваем их до равной высоты (по более высокой). Список
      платежей — до 10 строк, дальше скролл внутри карточки. Высоту НЕ фиксируем:
      карточки по содержимому (нет лишней пустоты и прокрутки страницы на коротких). */
