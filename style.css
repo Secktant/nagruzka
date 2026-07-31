@@ -833,6 +833,20 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   .tabbar, body { transition: none; }
 }
 
+/* Нижняя панель: делим ширину поровну вместо фиксированных отступов — с пятью
+   разделами (появились «Деньги») жёсткие 18px по бокам давали 402px при экране 375
+   и панель уезжала в горизонтальный скролл. Строго ниже брейкпоинта колонки:
+   в режиме меню-слева контейнер вертикальный, и flex:1 растянул бы кнопки по высоте. */
+@media (max-width: 1023px) {
+  .tabbar .tab {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-left: calc(2px * var(--ui-scale, 1));
+    padding-right: calc(2px * var(--ui-scale, 1));
+  }
+  .tabbar .lbl { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
 @media (max-width: 740px) {
   .stats { grid-template-columns: repeat(2, 1fr); row-gap: 10px; }
   .shell { padding-top: calc(12px + env(safe-area-inset-top)); }
