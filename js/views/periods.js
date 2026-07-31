@@ -129,7 +129,22 @@ export function renderPeriods() {
     </details>
     <button class="pay-toolbtn${filterActive ? ' act' : ''}" id="pay-filter-btn" title="Фильтр по типу">${icon('funnel')}<span>${filterLabel}</span></button>
   </div>`;
+  // Прокрутка внутри списков платежей должна пережить перерисовку: карточки
+  // пересобираются целиком (innerHTML ниже), а это обнуляет scrollTop — отметив
+  // галку в прокрученном списке, пользователь улетал в начало. Ключ — период карточки.
+  const scrolled = new Map();
+  container.querySelectorAll('.card[data-drop-period]').forEach(card => {
+    const list = card.querySelector('.payments');
+    if (list?.scrollTop) scrolled.set(card.dataset.dropPeriod, list.scrollTop);
+  });
+
   container.innerHTML = toolbar + days.map(d => periodCard(d, today, filter, sorts)).join('');
+
+  // назад после пересборки (браузер сам обрежет, если список стал короче)
+  scrolled.forEach((top, period) => {
+    const list = container.querySelector(`.card[data-drop-period="${period}"] .payments`);
+    if (list) list.scrollTop = top;
+  });
 
   // легенда свёрнута по умолчанию; запоминаем открыто/закрыто (иначе схлопывается на перерисовке)
   const legendEl = container.querySelector('#pay-legend');
