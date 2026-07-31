@@ -22,6 +22,14 @@ import {
   getLock, setLock, clearLock,
 } from '../db.js';
 
+// <input type="file"> НЕ шлёт change, если выбран тот же самый файл, что и в прошлый раз.
+// На успешном пути инпут пересоздаётся вызовом render(), а на неудачном (неверный пароль,
+// чужой файл, отказ от замены) — оставался с прежним значением, и повторная попытка с ТЕМ ЖЕ
+// файлом молча не срабатывала до перезагрузки страницы. Поэтому чистим value всегда.
+function resetFileInput(input) {
+  if (input) input.value = '';
+}
+
 export async function renderSettings() {
   const kf = await getKeyfile(S.db); // Uint8Array | undefined
   const sid = await getSyncId(S.db); // base64url-строка | undefined
@@ -137,17 +145,22 @@ export async function renderSettings() {
   };
   $('#kf-load').onclick = () => $('#kf-file').click();
   $('#kf-file').addEventListener('change', async e => {
-    const file = e.target.files[0];
-    if (!file) return;
-    const bytes = new Uint8Array(await file.arrayBuffer());
-    if (bytes.length !== 32) {
-      alert('Это не похоже на keyfile «Нагрузки» (ожидается 32 байта).');
-      return;
+    const input = e.target;
+    try {
+      const file = input.files[0];
+      if (!file) return;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      if (bytes.length !== 32) {
+        alert('Это не похоже на keyfile «Нагрузки» (ожидается 32 байта).');
+        return;
+      }
+      await setKeyfile(S.db, bytes);
+      S.currentKeyfile = bytes;
+      alert('keyfile загружен ✓');
+      render();
+    } finally {
+      resetFileInput(input);
     }
-    await setKeyfile(S.db, bytes);
-    S.currentKeyfile = bytes;
-    alert('keyfile загружен ✓');
-    render();
   });
 
   // --- зашифрованная копия ---
@@ -212,6 +225,8 @@ export async function renderSettings() {
       alert('Импорт выполнен ✓');
     } catch (err) {
       alert(err.message);
+    } finally {
+      resetFileInput(e.target);
     }
   });
 

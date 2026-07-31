@@ -4,7 +4,7 @@
     {
       "name": "nagruzka",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8137", "--directory", "/Users/secktant/Projects/nagruzka/app"],
+      "runtimeArgs": ["-m", "http.server", "8137", "--directory", "/Users/secktant/Projects (Claude)/nagruzka/app"],
       "port": 8137
     }
   ]
