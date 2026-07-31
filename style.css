@@ -296,6 +296,7 @@ body {
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
 .chip {
+  font-family: inherit;      /* часть чипов — <button>, у них свой дефолтный шрифт */
   font-size: 12.5px;
   font-weight: 600;
   padding: 5px 11px;
@@ -305,6 +306,44 @@ body {
 }
 .chip.due  { color: #ffd49c; border-color: rgba(255,212,156,.25); }
 .chip.done { color: var(--green); border-color: rgba(63,185,106,.25); }
+
+/* Тап по банку подсвечивает его платежи в этой карточке, остальные приглушает.
+   Не фильтр: строки остаются на месте, поэтому итог «Платежи» в шапке карточки
+   продолжает сходиться с тем, что видно. */
+.bank-chip { cursor: pointer; }
+.bank-chip.sel { border-color: var(--accent); color: var(--accent); background: rgba(110,168,254,.12); }
+.pay.bank-hl  { background: rgba(110,168,254,.10); border-radius: 8px; }
+.pay.bank-dim { opacity: .32; }
+.pay.bank-hl, .pay.bank-dim { transition: opacity .15s ease, background-color .15s ease; }
+
+/* ── Долги: итоги сверху + свёрнутый блок закрытых ── */
+.debt-totals { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.dt-cell {
+  flex: 1 1 190px;
+  background: var(--surface-2);
+  border-radius: 12px;
+  padding: 10px 13px;
+}
+.dt-lbl { display: block; font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+.dt-val { display: block; font-size: 19px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+.dt-sub { display: block; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+
+.debt-closed { margin-top: 4px; }
+.debt-closed > summary {
+  display: inline-flex; align-items: center; gap: 6px;
+  cursor: pointer; user-select: none; list-style: none;
+  padding: 6px 2px; width: max-content;
+  color: var(--muted); font-size: 14px; font-weight: 600;
+}
+.debt-closed > summary::-webkit-details-marker { display: none; }
+.debt-closed .leg-caret { transition: transform .15s; color: var(--muted); }
+.debt-closed[open] > summary .leg-caret { transform: rotate(90deg); }
+.dc-count {
+  font-size: 11.5px; font-weight: 600;
+  background: var(--surface-2); color: var(--muted);
+  border-radius: 999px; padding: 1px 8px;
+}
+.dc-body { margin-top: 6px; }
 
 .empty { color: var(--muted); padding: 24px; text-align: center; }
 .empty.small { padding: 10px 2px; text-align: left; }

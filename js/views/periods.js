@@ -18,6 +18,31 @@ import { icon } from '../icons.js';
 const isWide = () => window.innerWidth - navGutter() >= 1180;
 export const isForecast = () => isWide() && S.zoomLevel < 1.5;
 
+// ── Подсветка платежей выбранного банка ──
+// Жест «посмотреть сейчас», а не настройка: живёт в памяти модуля, НЕ в localStorage,
+// и умирает при перезагрузке. Пережить перерисовку обязан (иначе гаснет от любой галки),
+// поэтому applyBankFocus() зовётся в конце renderPeriods.
+// Скоуп — карточка: чипы банков принадлежат конкретному периоду.
+let bankFocus = null;   // null | { period, bank }
+
+function applyBankFocus(container) {
+  // период мог уйти с экрана (сменили месяц) — тогда подсветка теряет смысл
+  if (bankFocus && !container.querySelector(`.card[data-drop-period="${bankFocus.period}"]`)) bankFocus = null;
+
+  container.querySelectorAll('.bank-chip').forEach(c => {
+    c.classList.toggle('sel', !!bankFocus
+      && c.dataset.period === bankFocus.period && c.dataset.bankChip === bankFocus.bank);
+  });
+  container.querySelectorAll('.card[data-drop-period]').forEach(card => {
+    const active = !!bankFocus && card.dataset.dropPeriod === bankFocus.period;
+    card.querySelectorAll('.pay').forEach(row => {
+      const match = active && row.dataset.bank === bankFocus.bank;
+      row.classList.toggle('bank-hl', match);
+      row.classList.toggle('bank-dim', active && !match);
+    });
+  });
+}
+
 // ── Сорт+фильтр (пункт 2 дорожной карты). Фильтр глобальный, сорт по-карточно —
 // оба в localStorage. Дефолтный порядок НЕ трогаем: сортировка включается только
 // явным тапом по колонке (1-й тап — направление, 2-й — обратное, 3-й — сброс). ──
@@ -156,6 +181,17 @@ export function renderPeriods() {
   container.querySelectorAll('input[type=checkbox][data-pay]').forEach(cb => {
     cb.addEventListener('change', () => togglePaid(cb.dataset.pay, cb.checked));
   });
+
+  // Повторный тап по тому же банку снимает подсветку. Полный render() тут не нужен:
+  // меняются только классы — дешевле и не сбрасывает прокрутку списка.
+  container.querySelectorAll('.bank-chip').forEach(c => {
+    c.addEventListener('click', () => {
+      const same = bankFocus && bankFocus.period === c.dataset.period && bankFocus.bank === c.dataset.bankChip;
+      bankFocus = same ? null : { period: c.dataset.period, bank: c.dataset.bankChip };
+      applyBankFocus(container);
+    });
+  });
+  applyBankFocus(container);
   container.querySelectorAll('[data-edit-pay]').forEach(el => {
     el.addEventListener('click', () => openPaymentForm(el.dataset.period, el.dataset.editPay));
   });
@@ -233,11 +269,14 @@ function periodCard(d, today, filter, sorts) {
   const payments = shown.map(p => paymentRow(d.period, p)).join('') ||
     `<div class="empty small">${d.payments.length ? 'Скрыто фильтром' : 'Платежей нет'}</div>`;
 
+  // Чипы банков кликабельны: тап подсвечивает платежи этого банка в своей карточке
+  // (см. bankFocus/applyBankFocus). Поэтому button, а не span — это управляющий элемент.
   const chips = Object.keys(d.bankTouched).sort().map(bank => {
     const due = d.perBank[bank] || 0;
-    return due > 0
-      ? `<span class="chip due">${esc(bank)} — занести ${fmtMoney(due)}</span>`
-      : `<span class="chip done">${esc(bank)} — закрыто ✓</span>`;
+    const body = due > 0 ? `${esc(bank)} — занести ${fmtMoney(due)}` : `${esc(bank)} — закрыто ✓`;
+    return `<button type="button" class="chip bank-chip ${due > 0 ? 'due' : 'done'}"
+      data-bank-chip="${esc(bank)}" data-period="${d.period}"
+      title="Показать платежи банка">${body}</button>`;
   }).join('');
 
   return `
@@ -290,7 +329,7 @@ function paymentRow(period, p) {
     ? `draggable="true" data-src="${period}"${(p.id && !p.virtual) ? ` data-rec="${p.id}"` : ''}${p.installmentId ? ` data-inst="${p.installmentId}"` : ''}`
     : '';
   return `
-  <div class="pay ${p.paid ? 'paid' : ''} ${movable ? 'movable' : ''}">
+  <div class="pay ${p.paid ? 'paid' : ''} ${movable ? 'movable' : ''}" data-bank="${esc(p.bank || '')}">
     <input type="checkbox" data-pay="${esc(`${period}|${payKey(p)}`)}" ${p.paid ? 'checked' : ''}>
     <span class="pay-main clickable" data-edit-pay="${esc(payKey(p))}" data-period="${period}" ${drag} title="${movable ? 'Тащи в другой период или кликни, чтобы править' : 'Править платёж'}">
       ${payTypeMark(p)}

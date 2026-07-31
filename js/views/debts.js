@@ -9,11 +9,24 @@ import { $, $$, esc, uid, parseMoney, fmtNumEditor, moneyInput, openModal, close
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
 import { buildTimeline, installmentSummaries, generatePeriods, fmtMoney, fmtPeriod, loadZone } from '../engine.js';
 import { todayISO, horizonEnd, fmtPeriodFull, plural } from '../format.js';
+import { icon } from '../icons.js';
 
 export function renderDebts() {
   const sums = installmentSummaries(S.state, S.timeline);
   const open = sums.filter(s => !s.closed);
   const closed = sums.filter(s => s.closed);
+
+  // Итоги: по открытым — сколько ещё платить (и сколько уже внесено), по закрытым —
+  // сколько всего выплачено. Всё уже посчитано в installmentSummaries, только суммируем.
+  const total = (arr, f) => arr.reduce((n, s) => n + f(s), 0);
+  const remaining = total(open, s => s.remaining);
+  const paidOpen = total(open, s => s.paidSum);
+  const plannedOpen = total(open, s => s.inst.total);
+  const closedTotal = total(closed, s => s.inst.total);
+
+  // Закрытые свёрнуты по умолчанию — не мозолят глаза. Состояние помним, иначе
+  // блок схлопывался бы на каждой перерисовке (паттерн как у «Легенды» в Периодах).
+  const closedOpen = localStorage.getItem('closedDebtsOpen') === '1';
 
   const card = s => {
     const pctPaid = s.inst.total > 0 ? Math.min(100, s.paidSum / s.inst.total * 100) : 0;
@@ -41,8 +54,30 @@ export function renderDebts() {
       <h2>Долги и рассрочки</h2>
       <button class="btn primary" id="add-debt">+ рассрочка</button>
     </div>
+    ${(open.length || closed.length) ? `
+    <div class="debt-totals">
+      ${open.length ? `
+      <div class="dt-cell">
+        <span class="dt-lbl">Осталось выплатить</span>
+        <span class="dt-val">${fmtMoney(remaining)}</span>
+        <span class="dt-sub">внесено ${fmtMoney(paidOpen)} из ${fmtMoney(plannedOpen)}</span>
+      </div>` : ''}
+      ${closed.length ? `
+      <div class="dt-cell">
+        <span class="dt-lbl">Закрыто всего</span>
+        <span class="dt-val">${fmtMoney(closedTotal)}</span>
+        <span class="dt-sub">${closed.length} ${plural(closed.length, 'рассрочка', 'рассрочки', 'рассрочек')}</span>
+      </div>` : ''}
+    </div>` : ''}
     ${open.map(card).join('') || '<div class="empty">Активных рассрочек нет 🎉</div>'}
-    ${closed.length ? `<h3 class="muted-head">Закрытые</h3>${closed.map(card).join('')}` : ''}`;
+    ${closed.length ? `
+    <details class="debt-closed" id="closed-debts"${closedOpen ? ' open' : ''}>
+      <summary>${icon('chevronRight', 'leg-caret')}Закрытые<span class="dc-count">${closed.length}</span></summary>
+      <div class="dc-body">${closed.map(card).join('')}</div>
+    </details>` : ''}`;
+
+  const closedEl = $('#closed-debts');
+  if (closedEl) closedEl.addEventListener('toggle', () => localStorage.setItem('closedDebtsOpen', closedEl.open ? '1' : '0'));
 
   $('#add-debt').onclick = () => openDebtForm(null);
   $$('#view-debts [data-debt]').forEach(el => {
