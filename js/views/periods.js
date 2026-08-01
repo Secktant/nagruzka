@@ -4,20 +4,17 @@
 
 import { S, putRecord, deleteRecord, putInstallment } from '../store.js';
 import { render } from '../render.js';
-import { $, esc, uid, parseMoney, moneyInput, openModal, closeModal, navGutter } from '../dom.js';
+import { $, esc, uid, parseMoney, moneyInput, openModal, closeModal } from '../dom.js';
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
 import { generatePeriods, fmtMoney, fmtPeriod, fmtMonth, groupThousands } from '../engine.js';
 import { todayISO, horizonEnd, fmtPeriodFull, addDays, payKey, payTypeMark } from '../format.js';
 import { icon } from '../icons.js';
 import { renderRail } from './rail.js';
 
-// Режим «Периодов»: на широком экране и масштабе < 150% — лента-прогноз за год
-// (скролл, навигация по годам); иначе (телефон ИЛИ 150%) — один месяц, навигация по месяцам.
-// Меряем ширину, доступную КОНТЕНТУ (окно минус левое меню), а не ширину окна:
-// с открытым меню на 1280px под ленту года места уже нет. navGutter() = 0, когда
-// меню внизу панелью, — тогда поведение ровно прежнее.
-const isWide = () => window.innerWidth - navGutter() >= 1180;
-export const isForecast = () => isWide() && S.zoomLevel < 1.5;
+// Режимов у «Периодов» больше нет. До 1.3.0 экран переключался между лентой
+// года и одним месяцем по замеру «окно минус меню» — из-за этого на 150% он
+// схлопывался в две карточки и полэкрана пустело. Год теперь всегда виден в
+// рельсе, а справа всегда один месяц: одна раскладка на все ширины и масштабы.
 
 // ── Подсветка платежей выбранного банка ──
 // Жест «посмотреть сейчас», а не настройка: живёт в памяти модуля, НЕ в localStorage,
@@ -121,20 +118,12 @@ function openFilterModal() {
 
 export function renderPeriods() {
   renderRail();   // рельс — часть экрана «Периоды», диспетчер о нём не знает
-  const forecast = isForecast();
-  document.querySelector('.shell')?.classList.toggle('forecast-mode', forecast);
   const prefix = `${S.view.y}-${String(S.view.m).padStart(2, '0')}`;
-  // forecast: вся лента года (с января выбранного года), навигация по годам;
-  // иначе: один месяц, навигация по месяцам.
-  $('#month-title').textContent = forecast ? String(S.view.y) : fmtMonth(S.view.y, S.view.m);
-  const days = forecast
-    ? [...S.timeline.values()].filter(d => d.period >= `${S.view.y}-01-01` && d.period < `${S.view.y + 1}-01-01`)
-    : [...S.timeline.values()].filter(d => d.period.startsWith(prefix));
+  $('#month-title').textContent = fmtMonth(S.view.y, S.view.m);
+  const days = [...S.timeline.values()].filter(d => d.period.startsWith(prefix));
   const container = $('#periods');
   if (!days.length) {
-    container.innerHTML = forecast
-      ? `<div class="empty">За ${S.view.y} год периодов нет. История с января 2026.</div>`
-      : `<div class="empty">Нет периодов в этом месяце — история с января 2026.</div>`;
+    container.innerHTML = `<div class="empty">Нет периодов в этом месяце — история с января 2026.</div>`;
     return;
   }
   const today = todayISO();
@@ -165,11 +154,13 @@ export function renderPeriods() {
     if (list?.scrollTop) scrolled.set(card.dataset.dropPeriod, list.scrollTop);
   });
 
-  // Число колонок сетки берём из данных, а не из auto-fit: периодов в месяце
-  // ровно столько, сколько их есть, и на широком экране они обязаны стоять в
-  // ряд. auto-fit меряет ширину трека и на 150% ставил их друг под друга —
-  // возвращая ровно ту пустоту, ради которой всё затевалось.
-  container.style.setProperty('--period-cols', days.length);
+  // Колонки сетки берём из данных, а не из auto-fit: периодов в месяце ровно
+  // столько, сколько их есть, и на широком экране они обязаны стоять в ряд.
+  // auto-fit меряет ширину трека и на 150% ставил их друг под друга — возвращая
+  // ровно ту пустоту, ради которой всё затевалось.
+  // Подставляем ВЕСЬ список дорожек, а не число: repeat() не принимает var()
+  // счётчиком повторов — такое правило браузер молча выбрасывает.
+  container.style.setProperty('--period-tracks', `repeat(${days.length}, minmax(0, 1fr))`);
   container.innerHTML = toolbar + days.map(d => periodCard(d, today, filter, sorts)).join('');
 
   // назад после пересборки (браузер сам обрежет, если список стал короче)
