@@ -43,12 +43,19 @@ try {
 
   await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'load' });
 
-  // 1) приложение загрузилось: вкладка «Периоды» отрисовала контент (если модуль
-  //    не слинковался — здесь таймаут, что и есть детектор «белого экрана»).
+  // 1) приложение загрузилось: вкладка «Периоды» отрисовала карточки периодов
+  //    (если модуль не слинковался — здесь таймаут, что и есть детектор «белого
+  //    экрана»). Считаем именно карточки, а не длину текста: с 1.3.0 во вьюхе
+  //    есть ещё рельс года, и его названий месяцев хватило бы на любой порог длины.
   await page.waitForFunction(
-    () => { const el = document.querySelector('#view-periods'); return el && el.textContent.trim().length > 30; },
+    () => document.querySelectorAll('#periods .card').length >= 1,
     { timeout: 15000 },
   ).catch(() => { throw new Error('«Периоды» не отрисовались за 15с — приложение не стартовало'); });
+
+  // 1b) рельс года: ровно 12 строк-месяцев независимо от данных. Рисуется из
+  //     renderPeriods(), поэтому пустой рельс = вьюха отработала наполовину.
+  const railRows = await page.$$eval('#year-rail .rail-row', (els) => els.length).catch(() => 0);
+  if (railRows !== 12) throw new Error(`рельс года: ${railRows} месяцев вместо 12`);
 
   // 2) каждая вкладка рендерится
   const checks = [
@@ -58,7 +65,7 @@ try {
     // содержат бэкап + синк; замок рисуется только при заведённом ключе, поэтому >= 2.
     ['Деньги', '#view-money', null, async () => (await page.$$('#view-money h3')).length >= 3],
     ['Настройки', '#view-settings', null, async () => (await page.$$('#view-settings h3')).length >= 2],
-    ['Периоды', '#view-periods', (t) => t.length > 30],
+    ['Периоды', '#view-periods', null, async () => (await page.$$('#periods .card')).length >= 1],
   ];
   for (const [label, sel, textCheck, elCheck] of checks) {
     await page.evaluate((l) => {

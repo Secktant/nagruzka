@@ -4,19 +4,17 @@
 
 import { S, putRecord, deleteRecord, putInstallment } from '../store.js';
 import { render } from '../render.js';
-import { $, esc, uid, parseMoney, moneyInput, openModal, closeModal, navGutter } from '../dom.js';
+import { $, esc, uid, parseMoney, moneyInput, openModal, closeModal } from '../dom.js';
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
-import { generatePeriods, fmtMoney, fmtPeriod, fmtMonth } from '../engine.js';
+import { generatePeriods, fmtMoney, fmtPeriod, fmtMonth, groupThousands } from '../engine.js';
 import { todayISO, horizonEnd, fmtPeriodFull, addDays, payKey, payTypeMark } from '../format.js';
 import { icon } from '../icons.js';
+import { renderRail } from './rail.js';
 
-// Режим «Периодов»: на широком экране и масштабе < 150% — лента-прогноз за год
-// (скролл, навигация по годам); иначе (телефон ИЛИ 150%) — один месяц, навигация по месяцам.
-// Меряем ширину, доступную КОНТЕНТУ (окно минус левое меню), а не ширину окна:
-// с открытым меню на 1280px под ленту года места уже нет. navGutter() = 0, когда
-// меню внизу панелью, — тогда поведение ровно прежнее.
-const isWide = () => window.innerWidth - navGutter() >= 1180;
-export const isForecast = () => isWide() && S.zoomLevel < 1.5;
+// Режимов у «Периодов» больше нет. До 1.3.0 экран переключался между лентой
+// года и одним месяцем по замеру «окно минус меню» — из-за этого на 150% он
+// схлопывался в две карточки и полэкрана пустело. Год теперь всегда виден в
+// рельсе, а справа всегда один месяц: одна раскладка на все ширины и масштабы.
 
 // ── Подсветка платежей выбранного банка ──
 // Жест «посмотреть сейчас», а не настройка: живёт в памяти модуля, НЕ в localStorage,
@@ -119,20 +117,13 @@ function openFilterModal() {
 }
 
 export function renderPeriods() {
-  const forecast = isForecast();
-  document.querySelector('.shell')?.classList.toggle('forecast-mode', forecast);
+  renderRail();   // рельс — часть экрана «Периоды», диспетчер о нём не знает
   const prefix = `${S.view.y}-${String(S.view.m).padStart(2, '0')}`;
-  // forecast: вся лента года (с января выбранного года), навигация по годам;
-  // иначе: один месяц, навигация по месяцам.
-  $('#month-title').textContent = forecast ? String(S.view.y) : fmtMonth(S.view.y, S.view.m);
-  const days = forecast
-    ? [...S.timeline.values()].filter(d => d.period >= `${S.view.y}-01-01` && d.period < `${S.view.y + 1}-01-01`)
-    : [...S.timeline.values()].filter(d => d.period.startsWith(prefix));
+  $('#month-title').textContent = fmtMonth(S.view.y, S.view.m);
+  const days = [...S.timeline.values()].filter(d => d.period.startsWith(prefix));
   const container = $('#periods');
   if (!days.length) {
-    container.innerHTML = forecast
-      ? `<div class="empty">За ${S.view.y} год периодов нет. История с января 2026.</div>`
-      : `<div class="empty">Нет периодов в этом месяце — история с января 2026.</div>`;
+    container.innerHTML = `<div class="empty">Нет периодов в этом месяце — история с января 2026.</div>`;
     return;
   }
   const today = todayISO();
@@ -163,6 +154,13 @@ export function renderPeriods() {
     if (list?.scrollTop) scrolled.set(card.dataset.dropPeriod, list.scrollTop);
   });
 
+  // Колонки сетки берём из данных, а не из auto-fit: периодов в месяце ровно
+  // столько, сколько их есть, и на широком экране они обязаны стоять в ряд.
+  // auto-fit меряет ширину трека и на 150% ставил их друг под друга — возвращая
+  // ровно ту пустоту, ради которой всё затевалось.
+  // Подставляем ВЕСЬ список дорожек, а не число: repeat() не принимает var()
+  // счётчиком повторов — такое правило браузер молча выбрасывает.
+  container.style.setProperty('--period-tracks', `repeat(${days.length}, minmax(0, 1fr))`);
   container.innerHTML = toolbar + days.map(d => periodCard(d, today, filter, sorts)).join('');
 
   // назад после пересборки (браузер сам обрежет, если список стал короче)
@@ -175,6 +173,9 @@ export function renderPeriods() {
   const legendEl = container.querySelector('#pay-legend');
   if (legendEl) legendEl.addEventListener('toggle', () => localStorage.setItem('legendOpen', legendEl.open ? '1' : '0'));
   $('#pay-filter-btn')?.addEventListener('click', openFilterModal);
+  // «Скрыто фильтром» — тупик без выхода: даём выход прямо из пустого места
+  container.querySelectorAll('[data-clear-filter]').forEach(el =>
+    el.addEventListener('click', () => { setFilter(new Set(PAY_TYPES)); renderPeriods(); }));
   container.querySelectorAll('[data-sort]').forEach(btn =>
     btn.addEventListener('click', () => onSortClick(btn.dataset.period, btn.dataset.sort)));
 
@@ -258,16 +259,36 @@ export function renderPeriods() {
   });
 }
 
+// Доля дорожки шкалы, занятая доходом: хвост справа отдан перегрузу, поэтому
+// «больше ста» читается как выход за отметку. Раньше заливка упиралась в край,
+// и 101% выглядел ровно как 300%.
+const INCOME_AT = 77;
+
 function periodCard(d, today, filter, sorts) {
   const z = d.zone || { key: 'none', label: '—' };
-  const pct = d.load == null ? '—' : Math.round(d.load * 100) + '%';
-  const barW = d.load == null ? 0 : Math.min(100, d.load * 100);
+  const has = d.load != null;
+  const pct = has ? Math.round(d.load * 100) + '%' : '—';
+  const fillW = has ? Math.min(d.load, 1) * INCOME_AT : 0;
+  // перегруз рисуем до +30% дохода: дальше полоса перестаёт что-либо добавлять,
+  // а точную величину говорит подпись «не хватает N».
+  const overW = has && d.load > 1 ? Math.min(d.load - 1, 0.3) * INCOME_AT : 0;
+  // Каждый факт живёт в одном месте: у шкалы — слово зоны, величину нехватки
+  // говорит строка денег ниже («−19 200 ₽ не хватает»), поэтому здесь её нет.
+  const caption = has ? z.label : 'дохода нет';
+  // carry — накопительный остаток, поэтому «пришло с прошлого» = carry − leftover
+  const prev = d.carry - d.leftover;
+  const carryVal = `<span class="${d.carry < 0 ? 'neg' : ''}">${fmtMoney(d.carry)}</span>`;
+  const carryLine = Math.round(prev) === 0
+    ? `${carryVal} дальше`
+    : `${prev > 0 ? '+' : ''}${fmtMoney(prev)} с прошлого → ${carryVal} дальше`;
   const isCurrent = d.period >= today && today > addDays(d.period, -16);
   const sort = sorts[d.period] || null;
   const shown = arrangePayments(d.payments, filter, sort);
   const sortHead = d.payments.length ? sortHeader(d.period, sort) : '';
-  const payments = shown.map(p => paymentRow(d.period, p)).join('') ||
-    `<div class="empty small">${d.payments.length ? 'Скрыто фильтром' : 'Платежей нет'}</div>`;
+  const payments = shown.map(p => paymentRow(d.period, p)).join('') || (d.payments.length
+    ? `<div class="empty small">Все платежи скрыты фильтром.<br>
+        <button type="button" class="linkish" data-clear-filter>Показать все типы</button></div>`
+    : `<div class="empty small">Пусто. Добавьте платёж кнопкой + в шапке.</div>`);
 
   // Чипы банков кликабельны: тап подсвечивает платежи этого банка в своей карточке
   // (см. bankFocus/applyBankFocus). Поэтому button, а не span — это управляющий элемент.
@@ -284,18 +305,28 @@ function periodCard(d, today, filter, sorts) {
     <header class="card-head">
       <div class="card-date">${fmtPeriod(d.period)}${isCurrent ? '<span class="now-dot" title="ближайший период"></span>' : ''}</div>
       <div class="head-right">
-        <div class="badge zone-${z.key}">${pct} · ${z.label}</div>
         <button class="icon-btn" title="Добавить платёж" data-add-pay="${d.period}">${icon('plus')}</button>
       </div>
     </header>
-    <div class="bar"><div class="bar-fill zone-${z.key}" style="width:${barW}%"></div></div>
-    <div class="stats">
-      <div class="clickable" data-edit-income="${d.period}" title="Править доход периода">
-        <span class="lbl">Доход ✎</span><span class="val">${fmtMoney(d.income)}</span>
+    <div class="gauge">
+      <span class="gauge-num zone-text-${z.key}">${pct}</span>
+      <span class="gauge-cap">${caption}</span>
+    </div>
+    <div class="track">
+      <div class="track-fill zone-${z.key}" style="width:${fillW}%"></div>
+      ${overW ? `<div class="track-over" style="left:${INCOME_AT}%;width:${overW}%"></div>` : ''}
+      <div class="track-mark" style="left:${INCOME_AT}%"></div>
+      <div class="track-lbl" style="left:${INCOME_AT}%">доход</div>
+    </div>
+    <div class="money">
+      <div class="money-in">
+        <button type="button" class="mi-inc" data-edit-income="${d.period}" title="Править доход периода">${groupThousands(d.income)}${icon('pencil')}</button>
+        <span>− ${fmtMoney(d.totalExpense)}</span>
       </div>
-      <div><span class="lbl">Платежи</span><span class="val">${fmtMoney(d.totalExpense)}</span></div>
-      <div><span class="lbl">Останется</span><span class="val ${d.leftover < 0 ? 'neg' : ''}">${fmtMoney(d.leftover)}</span></div>
-      <div><span class="lbl">С переносом</span><span class="val ${d.carry < 0 ? 'neg' : ''}">${fmtMoney(d.carry)}</span></div>
+      <div class="money-left">
+        <span class="ml-val ${d.leftover < 0 ? 'neg' : ''}">${fmtMoney(d.leftover)}</span><span class="ml-lbl">${d.leftover < 0 ? 'не хватает' : 'останется'}</span>
+      </div>
+      <div class="money-carry">${carryLine}</div>
     </div>
     ${sortHead}
     <div class="payments">${payments}</div>

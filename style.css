@@ -12,8 +12,7 @@
   --over: #c33c54;
   /* Ширина левого меню. 0 = меню внизу панелью (телефон/узкое окно); в режиме
      колонки задаётся медиазапросом .tabbar внизу файла. Контент отодвигается на
-     эту величину (body padding-left), поэтому она же — «съеденная» ширина.
-     ВАЖНО: значения дублируются в js/dom.js → navGutter(), менять парой. */
+     эту величину (body padding-left), поэтому она же — «съеденная» ширина. */
   --nav-w: 0px;
   color-scheme: dark;
 }
@@ -106,12 +105,73 @@ body {
   font-size: 16px;
 }
 
+/* ── Рельс года ──────────────────────────────────────────────────────────────
+   Индекс всех периодов года: строка = месяц, столбик = период, высота = нагрузка.
+   Ширина фиксированная и маленькая (72px под сокращённые названия): рельс не
+   имеет права отъедать у карточек то, что мы им отдали в 1.2.1. Скрывать
+   названия при тесноте пробовали — 12 безымянных строк опознать нельзя,
+   так что рельс либо влезает с подписями, либо не нужен. */
+.periods-layout { display: flex; flex-direction: column; gap: 14px; }
+
+#year-rail { flex: none; }
+.rail-head { display: flex; align-items: center; margin-bottom: 4px; }
+.rail-year { font-size: 12px; font-weight: 600; color: var(--muted); flex: 1; text-align: center; font-variant-numeric: tabular-nums; }
+.rail-arrow {
+  display: flex; align-items: center; justify-content: center;
+  width: 18px; height: 22px; flex: none;
+  background: none; border: none; border-radius: 6px;
+  color: var(--muted); cursor: pointer;
+}
+.rail-arrow:hover { color: var(--accent); background: var(--surface-2); }
+.rail-arrow svg { width: .95em; height: .95em; }
+
+/* Узкий экран: полоса сверху. Месяцы делят ширину поровну, подпись под столбиками. */
+.rail-rows { display: flex; }
+.rail-row {
+  flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column-reverse; align-items: center; gap: 5px;
+  background: none; border: none; border-radius: 8px;
+  padding: 5px 0; cursor: pointer;
+  font: inherit;
+}
+.rr-name { font-size: 11.5px; color: var(--muted); }
+.rr-bars { display: flex; align-items: flex-end; gap: 3px; height: 24px; }
+/* min-height: спокойный месяц (13%) иначе вырождается в невидимую полоску, и
+   строка выглядит как «данных нет», хотя данные есть. */
+.rb { width: 5px; min-height: 3px; border-radius: 1px; background: var(--border); align-self: flex-end; }
+.rb.zone-green  { background: var(--green); }
+.rb.zone-yellow { background: var(--yellow); }
+.rb.zone-red    { background: var(--red); }
+.rb.zone-over   { background: var(--over); }
+.rail-row:hover { background: var(--surface); }
+.rail-row.on { background: var(--surface-2); }
+.rail-row.on .rr-name { color: var(--text); }
+
+/* Широкий экран: колонка слева. Порог 1024 — тот же, что у меню: рельс встаёт
+   колонкой ровно тогда, когда меню тоже колонка. */
+@media (min-width: 1024px) {
+  .periods-layout { flex-direction: row; align-items: flex-start; gap: 16px; }
+  .periods-layout > #periods { flex: 1 1 auto; min-width: 0; }
+  /* липкий: карточка с одиннадцатью платежами длиннее экрана, и рельс не должен
+     уезжать вместе с ней. sticky (не fixed) — единственное, что переживает zoom. */
+  #year-rail { width: 72px; position: sticky; top: 12px; }
+  .rail-rows { flex-direction: column; }
+  .rail-row {
+    flex: none;
+    flex-direction: row; align-items: center; gap: 6px;
+    padding: 4px 5px;
+  }
+  .rr-name { flex: 1; text-align: left; }
+  .rr-bars { height: 18px; }
+}
+
 #periods {
   display: grid;
   /* min(100%, …) обязателен: без него на телефоне трек шире экрана → горизонтальный скролл */
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
   gap: 16px;
-  align-items: start;
+  /* stretch (дефолт грида) — карточки одного месяца равны по высоте, а низ у них
+     общий: чипы банков стоят на одной линии, а не пляшут по длине списка. */
 }
 
 .card {
@@ -160,6 +220,51 @@ body {
 .bar-fill.zone-red    { background: var(--red); }
 .bar-fill.zone-over   { background: var(--over); }
 
+/* ── Шкала нагрузки (карточка периода) ───────────────────────────────────────
+   Дорожка ДЛИННЕЕ дохода: доход — отметка на 77% (INCOME_AT в views/periods.js,
+   менять парой), хвост справа отдан перегрузу. Поэтому «больше ста» видно как
+   выход за черту, а не как заливку в упор — раньше 101% и 300% выглядели
+   одинаково, ровно в том состоянии, где нужна тревога. */
+.gauge { display: flex; align-items: flex-end; gap: 9px; margin-bottom: 6px; }
+.gauge-num { font-size: 26px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.gauge-cap { font-size: 12.5px; color: var(--muted); padding-bottom: 2px; }
+.zone-text-none { color: var(--muted); }
+
+.track { position: relative; height: 9px; background: var(--surface-2); border-radius: 3px; }
+.track-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px 0 0 3px; transition: width .25s; }
+.track-fill.zone-green  { background: var(--green); }
+.track-fill.zone-yellow { background: var(--yellow); }
+.track-fill.zone-red    { background: var(--red); }
+.track-fill.zone-over   { background: var(--red); }
+.track-over { position: absolute; top: 0; bottom: 0; background: var(--over); border-radius: 0 3px 3px 0; }
+.track-mark { position: absolute; top: -4px; bottom: -4px; width: 2px; border-radius: 1px; background: var(--muted); }
+.track-lbl { position: absolute; top: 12px; font-size: 11px; color: var(--muted); transform: translateX(-50%); }
+
+/* Деньги строкой, а не сеткой из четырёх равных ячеек: доход и платежи — вход
+   в формулу (мелко), «останется» — ответ (крупно), перенос — связь со следующим
+   периодом. Верхний отступ держит место под подпись «доход» у шкалы. */
+.money { margin: 27px 0 12px; font-variant-numeric: tabular-nums; }
+.money-in { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+.mi-inc {
+  font: inherit; color: inherit;
+  background: none; border: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 1px 5px; margin-left: -5px; border-radius: 6px;
+}
+.mi-inc:hover { color: var(--accent); background: var(--surface-2); }
+.money-left { display: flex; align-items: baseline; gap: 7px; }
+.ml-val { font-size: 22px; font-weight: 700; }
+.ml-lbl { font-size: 12.5px; color: var(--muted); }
+.money-carry { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.ml-val.neg, .money-carry .neg { color: var(--red); }
+
+/* выход из тупика «скрыто фильтром» — ссылка внутри пустого места */
+.linkish {
+  font: inherit; color: var(--accent);
+  background: none; border: none; padding: 2px 0;
+  cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -177,23 +282,17 @@ body {
 
 .payments { border-top: 1px solid var(--border); }
 
-/* В режиме прогноза все карточки одной высоты: список платежей заполняет
-   свободное место и скроллится при переполнении (≈7 строк помещается),
-   меньше платежей — пустота, чипы банков прижаты к низу карточки.
-   Скоуп строго на Периоды — иначе forecast-mode (он остаётся на .shell при
-   переходе во вкладки) ломал бы карточки Долгов/Настроек. */
-/* Высоту НЕ фиксируем: карточки с 3 платежами раньше всё равно занимали 520px и
-   оставляли дыру. Растягивание до одной высоты даёт грид (stretch по строке), так что
-   ряд равен самому полному месяцу, а лента в целом заметно короче. */
-.shell.forecast-mode #periods { align-items: stretch; }
-.shell.forecast-mode #view-periods .card {
-  display: flex;
-  flex-direction: column;
-}
-.shell.forecast-mode #view-periods .payments {
+/* Карточки периода — всегда одной высоты (её даёт грид, stretch по строке), а
+   список платежей заполняет свободное место и скроллится при переполнении.
+   Высоту НЕ фиксируем: карточка с тремя платежами не должна занимать место
+   десяти. До 1.3.0 это правило работало только в режиме прогноза; режимов
+   больше нет, поэтому оно базовое.
+   Скоуп на #view-periods обязателен — иначе поедет в карточки Долгов/Настроек. */
+#view-periods .card { display: flex; flex-direction: column; }
+#view-periods .payments {
   flex: 1 1 auto;
   min-height: 0;
-  max-height: calc(11 * 40px);   /* месяц-рекордсмен не растягивает всю строку ленты */
+  max-height: calc(11 * 40px);   /* месяц-рекордсмен не растягивает соседа по строке */
   overflow-y: auto;
   overflow-x: hidden;   /* overflow-y:auto делает overflow-x вычисляемым в auto → ложная горизонт. полоса */
 }
@@ -208,13 +307,19 @@ body {
 }
 .pay:last-child { border-bottom: none; }
 .pay input { width: 17px; height: 17px; accent-color: var(--green); cursor: pointer; flex: none; }
-.pay-name { flex: 1; display: flex; align-items: center; gap: 7px; min-width: 0; }
+/* На узкой карточке (150% + развёрнутое меню ⇒ ~300px) бейджу банка не хватает
+   места рядом с названием и суммой. Резать нечего: «Нал…» вместо «Налог на
+   имущество» бесполезно, «А…» вместо «Альфа» — тем более. Поэтому бейдж
+   ПЕРЕНОСИТСЯ под название, а строка становится двухэтажной. Многоточие у
+   названия остаётся крайней мерой — на совсем длинных именах. */
+.pay-name { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; min-width: 0; }
+.pn-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pay.paid .pay-name { color: var(--muted); }
 /* зачёркивание — на самих токенах (имя, бейдж банка) по их собственным метрикам,
    иначе линия от крупного .pay-name проходит по низу мелкого бейджа. */
 .pay.paid .pn-text,
 .pay.paid .bank-tag { text-decoration: line-through; text-decoration-color: rgba(139,151,168,.5); }
-.pay-amount { font-weight: 600; font-variant-numeric: tabular-nums; }
+.pay-amount { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
 .pay.paid .pay-amount { color: var(--muted); font-weight: 500; }
 
 .pay-type {
@@ -301,6 +406,7 @@ body {
   padding: 1px 7px;
   border-radius: 999px;
   flex: none;
+  white-space: nowrap;
 }
 
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
@@ -906,26 +1012,33 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
    заняла всё окно (сетка #periods сама даёт «сколько влезет» колонок). Только когда
    видны Периоды (:has) — остальные вкладки остаются компактными. Нет :has → 920px. */
 @media (min-width: 1024px) {
-  /* Один месяц (НЕ прогноз) — это ровно 2 карточки, и ширину даём ПОД НИХ: иначе
-     auto-fit держит лишнюю колонку (тулбар «Легенда/Фильтр» растянут на всю строку,
-     поэтому пустых дорожек для схлопывания нет) и справа зияет дыра.
-     1120px = 2×552 + gap — карточки во всю доступную ширину, а не узкие по центру.
+  /* Месяц — это ровно столько карточек, сколько в нём периодов, и ширину даём
+     ПОД НИХ: без потолка на широком мониторе строка растянулась бы до нечитаемой.
+     1120px = 2×552 + gap, +88 = рельс года (72) со своим зазором (16), иначе он
+     забирал бы у карточек ширину, которую мы им отдали в 1.2.1.
      Множитель --ui-scale: .view масштабируется zoom-ом, значит логическая ширина =
      физическая / масштаб, и на 150% потолок растёт вместе с содержимым. */
-  .shell:has(#view-periods:not([hidden])) { max-width: calc(1120px * var(--ui-scale, 1)); }
-  /* Лента года — во всю ширину окна: колонок «сколько влезет» по 400px.
-     Потолок только чтобы на ультрашироком мониторе строка не растянулась до нечитаемой. */
-  .shell.forecast-mode:has(#view-periods:not([hidden])) { max-width: 2400px; }
+  .shell:has(#view-periods:not([hidden])) { max-width: calc(1208px * var(--ui-scale, 1)); }
 
-  /* Одиночный месяц (широкий экран, НЕ прогноз): список платежей — до 10 строк,
-     дальше скролл внутри карточки. Высоту карточек НЕ равняем: у месяца с тремя
-     платежами не должно быть пустого низа под соседа с десятью (align-items: start
-     из базового правила #periods). */
-  .shell:not(.forecast-mode) #view-periods .payments {
-    max-height: calc(10 * 40px);   /* не больше 10 строк */
-    overflow-y: auto;
-    overflow-x: hidden;
-  }
+  /* Колонок ровно столько, сколько периодов в месяце: весь список дорожек
+     подставляет views/periods.js в --period-tracks (числом нельзя — repeat()
+     не принимает var() счётчиком повторов, правило молча выбрасывается).
+     auto-fit тут врёт: он меряет ширину трека и на 150% ставил два периода
+     друг под друга — то есть возвращал ту самую пустоту, ради которой всё
+     затевалось.
+
+     ВАЖНО: правило обязано стоять НИЖЕ базового #periods — специфичность у них
+     одинаковая, медиазапрос её не повышает, и выше по файлу оно молча
+     проигрывало.
+
+     Порога «стало слишком тесно» тут НЕТ намеренно. Пробовали container query
+     на #view-periods — и замерили, что под zoom он считает НЕ логические
+     пиксели элемента: при offsetWidth 699 условие вело себя как для ~466, то
+     есть порог делится на масштаб ещё раз. Значит любой порог в @container
+     поехал бы вместе с зумом, и мы получили бы новый скрытый режим — ровно то,
+     что этот релиз убирает. Худший случай без порога (окно 1024 + 150% +
+     развёрнутое меню) даёт узкие карточки, но не сломанные. */
+  #periods { grid-template-columns: var(--period-tracks, repeat(2, minmax(0, 1fr))); }
 }
 
 /* Экран-замок (Шаг 5): полноэкранный гейт до разблокировки биометрией/паролём */

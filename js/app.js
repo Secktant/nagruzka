@@ -9,7 +9,7 @@ import {
   getKeyfile, getSyncId, getSyncKey, getLock,
 } from './db.js';
 import { render } from './render.js';
-import { renderPeriods, isForecast } from './views/periods.js';
+import { wireRail } from './views/rail.js';
 import { createSyncEngine, runLockGate } from './sync-ui.js';
 import { isConfigured as syncConfigured } from './sync.js';
 import { $, $$, wireMoneyInputs, closeModal } from './dom.js';
@@ -18,20 +18,18 @@ import { S } from './store.js';
 
 // ───────────────────────── запуск ─────────────────────────
 
-// Свёрнутое левое меню — класс на <html> (им же управляет CSS и navGutter()).
+// Свёрнутое левое меню — класс на <html>, по нему же CSS выбирает --nav-w.
 // Ставим до первой отрисовки; экран закрыт стартовым лоадером, так что мигания нет.
 if (localStorage.getItem('navCollapsed')) document.documentElement.classList.add('nav-collapsed');
 
+// Стрелки в «Периодах» листают месяц — всегда. До 1.3.0 они меняли смысл на
+// годовой в режиме прогноза; режимов больше нет, произвольный доступ к месяцу
+// и году даёт рельс.
 function shiftMonth(delta) {
   S.view.m += delta;
   if (S.view.m < 1) { S.view.m = 12; S.view.y--; }
   if (S.view.m > 12) { S.view.m = 1; S.view.y++; }
   render();
-}
-// стрелки в «Периодах»: в режиме прогноза листают ГОД, иначе — месяц
-function periodsNav(delta) {
-  if (isForecast()) { S.view.y += delta; render(); }
-  else shiftMonth(delta);
 }
 
 
@@ -74,11 +72,12 @@ async function main() {
       S.syncEngine.pullAndApply();
     }
   }
-  $('#prev-month').addEventListener('click', () => periodsNav(-1));
-  $('#next-month').addEventListener('click', () => periodsNav(1));
+  $('#prev-month').addEventListener('click', () => shiftMonth(-1));
+  $('#next-month').addEventListener('click', () => shiftMonth(1));
+  // Рельс года: произвольный доступ к месяцу, стрелки в топбаре — шаг вперёд/назад.
+  wireRail((y, m) => { S.view.y = y; S.view.m = m; render(); });
 
   // масштаб контента (только .view — топбар/таббар не трогаем). Хранится в localStorage.
-  // Макс 150% — на нём «Периоды» переключаются в режим одного месяца (крупно, без скролла).
   const clampZoom = z => Math.min(1.5, Math.max(0.6, Math.round(z * 10) / 10));
   function applyZoom(z) {
     z = clampZoom(z);
@@ -94,19 +93,11 @@ async function main() {
     localStorage.setItem('zoom', String(z));
     return z;
   }
-  // Порог «узко ↔ широко» зависит и от окна, и от ширины меню (см. navGutter), поэтому
-  // следим не за медиазапросом, а за самим решением isForecast(). force — когда
-  // перерисовать надо в любом случае (масштаб: на пороге 150% меняется раскладка).
-  let wasForecast;
-  const syncLayout = (force = false) => {
-    const f = isForecast();
-    const flipped = f !== wasForecast;
-    wasForecast = f;
-    if ((flipped || force) && S.view.tab === 'periods') renderPeriods();
-  };
-  const setZoom = z => { zoom = applyZoom(z); syncLayout(true); };
+  // Раскладка «Периодов» больше не зависит от замеров в JS: колонок ровно
+  // столько, сколько периодов в месяце, а тесноту ловит container query в CSS.
+  // Поэтому ни слежения за ресайзом, ни перерисовки на смену масштаба нет.
+  const setZoom = z => { zoom = applyZoom(z); };
   let zoom = applyZoom(parseFloat(localStorage.getItem('zoom')) || 1);
-  wasForecast = isForecast();                 // масштаб уже применён — решение достоверно
   $('#zoom-in').onclick = () => setZoom(zoom + 0.1);
   $('#zoom-out').onclick = () => setZoom(zoom - 0.1);
   // хоткеи Cmd/Ctrl +/−/0 ведём через НАШ масштаб (и глушим браузерный зум,
@@ -120,8 +111,6 @@ async function main() {
   $$('.tab').forEach(t => t.addEventListener('click', () => { S.view.tab = t.dataset.tab; render(); }));
   $('#modal').addEventListener('click', e => { if (e.target.id === 'modal') closeModal(); });
   $('#modal-close').onclick = closeModal;
-
-  window.addEventListener('resize', () => syncLayout());
 
   // сворачивание левого меню (в режиме нижней панели кнопка скрыта CSS-ом)
   const navToggle = $('#nav-toggle');
@@ -137,7 +126,6 @@ async function main() {
     const collapsed = document.documentElement.classList.toggle('nav-collapsed');
     localStorage.setItem('navCollapsed', collapsed ? '1' : '');
     labelNavToggle();
-    syncLayout();   // изменилась доступная ширина — вдруг сменился режим «Периодов»
   };
   wireMoneyInputs(document);
   render();

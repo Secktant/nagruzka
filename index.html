@@ -41,7 +41,16 @@
       </div>
     </div>
 
-    <div id="view-periods" class="view"><div id="periods"></div></div>
+    <!-- Рельс года — сестра сетки карточек, а не её элемент: #periods остаётся
+         чистым гридом (на нём завязаны drop-таргеты, восстановление прокрутки и
+         подсветка банка). Колонкой слева на широком, полосой сверху на узком —
+         раскладку задаёт CSS, разметка о режиме не знает. -->
+    <div id="view-periods" class="view">
+      <div class="periods-layout">
+        <aside id="year-rail" aria-label="Год"></aside>
+        <div id="periods"></div>
+      </div>
+    </div>
     <div id="view-debts" class="view" hidden></div>
     <div id="view-chart" class="view" hidden></div>
     <div id="view-money" class="view" hidden></div>
