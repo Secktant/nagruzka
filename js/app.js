@@ -10,6 +10,7 @@ import {
 } from './db.js';
 import { render } from './render.js';
 import { renderPeriods, isForecast } from './views/periods.js';
+import { wireRail } from './views/rail.js';
 import { createSyncEngine, runLockGate } from './sync-ui.js';
 import { isConfigured as syncConfigured } from './sync.js';
 import { $, $$, wireMoneyInputs, closeModal } from './dom.js';
@@ -76,6 +77,8 @@ async function main() {
   }
   $('#prev-month').addEventListener('click', () => periodsNav(-1));
   $('#next-month').addEventListener('click', () => periodsNav(1));
+  // Рельс года: произвольный доступ к месяцу, стрелки в топбаре — шаг вперёд/назад.
+  wireRail((y, m) => { S.view.y = y; S.view.m = m; render(); });
 
   // масштаб контента (только .view — топбар/таббар не трогаем). Хранится в localStorage.
   // Макс 150% — на нём «Периоды» переключаются в режим одного месяца (крупно, без скролла).

@@ -106,6 +106,88 @@ body {
   font-size: 16px;
 }
 
+/* ── Рельс года ──────────────────────────────────────────────────────────────
+   Индекс всех периодов года: строка = месяц, столбик = период, высота = нагрузка.
+   Ширина фиксированная и маленькая (72px под сокращённые названия): рельс не
+   имеет права отъедать у карточек то, что мы им отдали в 1.2.1. Скрывать
+   названия при тесноте пробовали — 12 безымянных строк опознать нельзя,
+   так что рельс либо влезает с подписями, либо не нужен.
+
+   container-type нужен НЕ рельсу, а сетке карточек ниже: она единственная,
+   кому надо знать РЕАЛЬНО доступную ширину. Медиазапрос тут не годится — окно
+   ≠ контент (слева меню, содержимое масштабируется zoom-ом), и попытка мерить
+   окно уже стоила нам navGutter(). Под zoom контейнер отдаёт логические
+   пиксели, то есть на 150% порог срабатывает там, где и должен. */
+#view-periods { container-type: inline-size; }
+
+.periods-layout { display: flex; flex-direction: column; gap: 14px; }
+
+#year-rail { flex: none; }
+.rail-head { display: flex; align-items: center; margin-bottom: 4px; }
+.rail-year { font-size: 12px; font-weight: 600; color: var(--muted); flex: 1; text-align: center; font-variant-numeric: tabular-nums; }
+.rail-arrow {
+  display: flex; align-items: center; justify-content: center;
+  width: 18px; height: 22px; flex: none;
+  background: none; border: none; border-radius: 6px;
+  color: var(--muted); cursor: pointer;
+}
+.rail-arrow:hover { color: var(--accent); background: var(--surface-2); }
+.rail-arrow svg { width: .95em; height: .95em; }
+
+/* Узкий экран: полоса сверху. Месяцы делят ширину поровну, подпись под столбиками. */
+.rail-rows { display: flex; }
+.rail-row {
+  flex: 1 1 0; min-width: 0;
+  display: flex; flex-direction: column-reverse; align-items: center; gap: 5px;
+  background: none; border: none; border-radius: 8px;
+  padding: 5px 0; cursor: pointer;
+  font: inherit;
+}
+.rr-name { font-size: 11.5px; color: var(--muted); }
+.rr-bars { display: flex; align-items: flex-end; gap: 3px; height: 24px; }
+/* min-height: спокойный месяц (13%) иначе вырождается в невидимую полоску, и
+   строка выглядит как «данных нет», хотя данные есть. */
+.rb { width: 5px; min-height: 3px; border-radius: 1px; background: var(--border); align-self: flex-end; }
+.rb.zone-green  { background: var(--green); }
+.rb.zone-yellow { background: var(--yellow); }
+.rb.zone-red    { background: var(--red); }
+.rb.zone-over   { background: var(--over); }
+.rail-row:hover { background: var(--surface); }
+.rail-row.on { background: var(--surface-2); }
+.rail-row.on .rr-name { color: var(--text); }
+
+/* Широкий экран: колонка слева. Порог тот же, что у меню (NAV_BREAKPOINT):
+   рельс встаёт колонкой ровно тогда, когда меню тоже колонка. */
+@media (min-width: 1024px) {
+  .periods-layout { flex-direction: row; align-items: flex-start; gap: 16px; }
+  .periods-layout > #periods { flex: 1 1 auto; min-width: 0; }
+  /* липкий: карточка с одиннадцатью платежами длиннее экрана, и рельс не должен
+     уезжать вместе с ней. sticky (не fixed) — единственное, что переживает zoom. */
+  #year-rail { width: 72px; position: sticky; top: 12px; }
+  .rail-rows { flex-direction: column; }
+  .rail-row {
+    flex: none;
+    flex-direction: row; align-items: center; gap: 6px;
+    padding: 4px 5px;
+  }
+  .rr-name { flex: 1; text-align: left; }
+  .rr-bars { height: 18px; }
+
+  /* Колонок ровно столько, сколько периодов в месяце (--period-cols ставит
+     views/periods.js). auto-fit тут врёт: он меряет ширину трека и на 150%
+     ставил два периода друг под друга — то есть возвращал ту самую пустоту,
+     ради которой всё затевалось. */
+  #periods { grid-template-columns: repeat(var(--period-cols, 2), minmax(0, 1fr)); }
+
+  /* …кроме случая, когда места действительно нет (узкое окно + крупный масштаб):
+     тогда лучше столбик, чем две нечитаемые колонки. 540px = две колонки по
+     ~262: ниже этого строка платежа (галка, тип, название, банк, сумма) начинает
+     переноситься. Порог замерен по строке, а не выбран на глаз. */
+  @container (max-width: 540px) {
+    #periods { grid-template-columns: 1fr; }
+  }
+}
+
 #periods {
   display: grid;
   /* min(100%, …) обязателен: без него на телефоне трек шире экрана → горизонтальный скролл */
@@ -955,9 +1037,11 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
      auto-fit держит лишнюю колонку (тулбар «Легенда/Фильтр» растянут на всю строку,
      поэтому пустых дорожек для схлопывания нет) и справа зияет дыра.
      1120px = 2×552 + gap — карточки во всю доступную ширину, а не узкие по центру.
+     +88 = рельс года (72) со своим зазором (16), иначе он забирал бы ширину
+     у карточек, которую мы им отдали в 1.2.1.
      Множитель --ui-scale: .view масштабируется zoom-ом, значит логическая ширина =
      физическая / масштаб, и на 150% потолок растёт вместе с содержимым. */
-  .shell:has(#view-periods:not([hidden])) { max-width: calc(1120px * var(--ui-scale, 1)); }
+  .shell:has(#view-periods:not([hidden])) { max-width: calc(1208px * var(--ui-scale, 1)); }
   /* Лента года — во всю ширину окна: колонок «сколько влезет» по 400px.
      Потолок только чтобы на ультрашироком мониторе строка не растянулась до нечитаемой. */
   .shell.forecast-mode:has(#view-periods:not([hidden])) { max-width: 2400px; }

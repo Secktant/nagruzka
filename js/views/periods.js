@@ -9,6 +9,7 @@ import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
 import { generatePeriods, fmtMoney, fmtPeriod, fmtMonth, groupThousands } from '../engine.js';
 import { todayISO, horizonEnd, fmtPeriodFull, addDays, payKey, payTypeMark } from '../format.js';
 import { icon } from '../icons.js';
+import { renderRail } from './rail.js';
 
 // Режим «Периодов»: на широком экране и масштабе < 150% — лента-прогноз за год
 // (скролл, навигация по годам); иначе (телефон ИЛИ 150%) — один месяц, навигация по месяцам.
@@ -119,6 +120,7 @@ function openFilterModal() {
 }
 
 export function renderPeriods() {
+  renderRail();   // рельс — часть экрана «Периоды», диспетчер о нём не знает
   const forecast = isForecast();
   document.querySelector('.shell')?.classList.toggle('forecast-mode', forecast);
   const prefix = `${S.view.y}-${String(S.view.m).padStart(2, '0')}`;
@@ -163,6 +165,11 @@ export function renderPeriods() {
     if (list?.scrollTop) scrolled.set(card.dataset.dropPeriod, list.scrollTop);
   });
 
+  // Число колонок сетки берём из данных, а не из auto-fit: периодов в месяце
+  // ровно столько, сколько их есть, и на широком экране они обязаны стоять в
+  // ряд. auto-fit меряет ширину трека и на 150% ставил их друг под друга —
+  // возвращая ровно ту пустоту, ради которой всё затевалось.
+  container.style.setProperty('--period-cols', days.length);
   container.innerHTML = toolbar + days.map(d => periodCard(d, today, filter, sorts)).join('');
 
   // назад после пересборки (браузер сам обрежет, если список стал короче)
