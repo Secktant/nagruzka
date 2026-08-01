@@ -160,6 +160,51 @@ body {
 .bar-fill.zone-red    { background: var(--red); }
 .bar-fill.zone-over   { background: var(--over); }
 
+/* ── Шкала нагрузки (карточка периода) ───────────────────────────────────────
+   Дорожка ДЛИННЕЕ дохода: доход — отметка на 77% (INCOME_AT в views/periods.js,
+   менять парой), хвост справа отдан перегрузу. Поэтому «больше ста» видно как
+   выход за черту, а не как заливку в упор — раньше 101% и 300% выглядели
+   одинаково, ровно в том состоянии, где нужна тревога. */
+.gauge { display: flex; align-items: flex-end; gap: 9px; margin-bottom: 6px; }
+.gauge-num { font-size: 26px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+.gauge-cap { font-size: 12.5px; color: var(--muted); padding-bottom: 2px; }
+.zone-text-none { color: var(--muted); }
+
+.track { position: relative; height: 9px; background: var(--surface-2); border-radius: 3px; }
+.track-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px 0 0 3px; transition: width .25s; }
+.track-fill.zone-green  { background: var(--green); }
+.track-fill.zone-yellow { background: var(--yellow); }
+.track-fill.zone-red    { background: var(--red); }
+.track-fill.zone-over   { background: var(--red); }
+.track-over { position: absolute; top: 0; bottom: 0; background: var(--over); border-radius: 0 3px 3px 0; }
+.track-mark { position: absolute; top: -4px; bottom: -4px; width: 2px; border-radius: 1px; background: var(--muted); }
+.track-lbl { position: absolute; top: 12px; font-size: 11px; color: var(--muted); transform: translateX(-50%); }
+
+/* Деньги строкой, а не сеткой из четырёх равных ячеек: доход и платежи — вход
+   в формулу (мелко), «останется» — ответ (крупно), перенос — связь со следующим
+   периодом. Верхний отступ держит место под подпись «доход» у шкалы. */
+.money { margin: 27px 0 12px; font-variant-numeric: tabular-nums; }
+.money-in { font-size: 12.5px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
+.mi-inc {
+  font: inherit; color: inherit;
+  background: none; border: none; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 1px 5px; margin-left: -5px; border-radius: 6px;
+}
+.mi-inc:hover { color: var(--accent); background: var(--surface-2); }
+.money-left { display: flex; align-items: baseline; gap: 7px; }
+.ml-val { font-size: 22px; font-weight: 700; }
+.ml-lbl { font-size: 12.5px; color: var(--muted); }
+.money-carry { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
+.ml-val.neg, .money-carry .neg { color: var(--red); }
+
+/* выход из тупика «скрыто фильтром» — ссылка внутри пустого места */
+.linkish {
+  font: inherit; color: var(--accent);
+  background: none; border: none; padding: 2px 0;
+  cursor: pointer; text-decoration: underline; text-underline-offset: 2px;
+}
+
 .stats {
   display: grid;
   grid-template-columns: repeat(4, 1fr);

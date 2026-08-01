@@ -6,7 +6,7 @@ import { S, putRecord, deleteRecord, putInstallment } from '../store.js';
 import { render } from '../render.js';
 import { $, esc, uid, parseMoney, moneyInput, openModal, closeModal, navGutter } from '../dom.js';
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
-import { generatePeriods, fmtMoney, fmtPeriod, fmtMonth } from '../engine.js';
+import { generatePeriods, fmtMoney, fmtPeriod, fmtMonth, groupThousands } from '../engine.js';
 import { todayISO, horizonEnd, fmtPeriodFull, addDays, payKey, payTypeMark } from '../format.js';
 import { icon } from '../icons.js';
 
@@ -175,6 +175,9 @@ export function renderPeriods() {
   const legendEl = container.querySelector('#pay-legend');
   if (legendEl) legendEl.addEventListener('toggle', () => localStorage.setItem('legendOpen', legendEl.open ? '1' : '0'));
   $('#pay-filter-btn')?.addEventListener('click', openFilterModal);
+  // «Скрыто фильтром» — тупик без выхода: даём выход прямо из пустого места
+  container.querySelectorAll('[data-clear-filter]').forEach(el =>
+    el.addEventListener('click', () => { setFilter(new Set(PAY_TYPES)); renderPeriods(); }));
   container.querySelectorAll('[data-sort]').forEach(btn =>
     btn.addEventListener('click', () => onSortClick(btn.dataset.period, btn.dataset.sort)));
 
@@ -258,16 +261,36 @@ export function renderPeriods() {
   });
 }
 
+// Доля дорожки шкалы, занятая доходом: хвост справа отдан перегрузу, поэтому
+// «больше ста» читается как выход за отметку. Раньше заливка упиралась в край,
+// и 101% выглядел ровно как 300%.
+const INCOME_AT = 77;
+
 function periodCard(d, today, filter, sorts) {
   const z = d.zone || { key: 'none', label: '—' };
-  const pct = d.load == null ? '—' : Math.round(d.load * 100) + '%';
-  const barW = d.load == null ? 0 : Math.min(100, d.load * 100);
+  const has = d.load != null;
+  const pct = has ? Math.round(d.load * 100) + '%' : '—';
+  const fillW = has ? Math.min(d.load, 1) * INCOME_AT : 0;
+  // перегруз рисуем до +30% дохода: дальше полоса перестаёт что-либо добавлять,
+  // а точную величину говорит подпись «не хватает N».
+  const overW = has && d.load > 1 ? Math.min(d.load - 1, 0.3) * INCOME_AT : 0;
+  // Каждый факт живёт в одном месте: у шкалы — слово зоны, величину нехватки
+  // говорит строка денег ниже («−19 200 ₽ не хватает»), поэтому здесь её нет.
+  const caption = has ? z.label : 'дохода нет';
+  // carry — накопительный остаток, поэтому «пришло с прошлого» = carry − leftover
+  const prev = d.carry - d.leftover;
+  const carryVal = `<span class="${d.carry < 0 ? 'neg' : ''}">${fmtMoney(d.carry)}</span>`;
+  const carryLine = Math.round(prev) === 0
+    ? `${carryVal} дальше`
+    : `${prev > 0 ? '+' : ''}${fmtMoney(prev)} с прошлого → ${carryVal} дальше`;
   const isCurrent = d.period >= today && today > addDays(d.period, -16);
   const sort = sorts[d.period] || null;
   const shown = arrangePayments(d.payments, filter, sort);
   const sortHead = d.payments.length ? sortHeader(d.period, sort) : '';
-  const payments = shown.map(p => paymentRow(d.period, p)).join('') ||
-    `<div class="empty small">${d.payments.length ? 'Скрыто фильтром' : 'Платежей нет'}</div>`;
+  const payments = shown.map(p => paymentRow(d.period, p)).join('') || (d.payments.length
+    ? `<div class="empty small">Все платежи скрыты фильтром.<br>
+        <button type="button" class="linkish" data-clear-filter>Показать все типы</button></div>`
+    : `<div class="empty small">Пусто. Добавьте платёж кнопкой + в шапке.</div>`);
 
   // Чипы банков кликабельны: тап подсвечивает платежи этого банка в своей карточке
   // (см. bankFocus/applyBankFocus). Поэтому button, а не span — это управляющий элемент.
@@ -284,18 +307,28 @@ function periodCard(d, today, filter, sorts) {
     <header class="card-head">
       <div class="card-date">${fmtPeriod(d.period)}${isCurrent ? '<span class="now-dot" title="ближайший период"></span>' : ''}</div>
       <div class="head-right">
-        <div class="badge zone-${z.key}">${pct} · ${z.label}</div>
         <button class="icon-btn" title="Добавить платёж" data-add-pay="${d.period}">${icon('plus')}</button>
       </div>
     </header>
-    <div class="bar"><div class="bar-fill zone-${z.key}" style="width:${barW}%"></div></div>
-    <div class="stats">
-      <div class="clickable" data-edit-income="${d.period}" title="Править доход периода">
-        <span class="lbl">Доход ✎</span><span class="val">${fmtMoney(d.income)}</span>
+    <div class="gauge">
+      <span class="gauge-num zone-text-${z.key}">${pct}</span>
+      <span class="gauge-cap">${caption}</span>
+    </div>
+    <div class="track">
+      <div class="track-fill zone-${z.key}" style="width:${fillW}%"></div>
+      ${overW ? `<div class="track-over" style="left:${INCOME_AT}%;width:${overW}%"></div>` : ''}
+      <div class="track-mark" style="left:${INCOME_AT}%"></div>
+      <div class="track-lbl" style="left:${INCOME_AT}%">доход</div>
+    </div>
+    <div class="money">
+      <div class="money-in">
+        <button type="button" class="mi-inc" data-edit-income="${d.period}" title="Править доход периода">${groupThousands(d.income)}${icon('pencil')}</button>
+        <span>− ${fmtMoney(d.totalExpense)}</span>
       </div>
-      <div><span class="lbl">Платежи</span><span class="val">${fmtMoney(d.totalExpense)}</span></div>
-      <div><span class="lbl">Останется</span><span class="val ${d.leftover < 0 ? 'neg' : ''}">${fmtMoney(d.leftover)}</span></div>
-      <div><span class="lbl">С переносом</span><span class="val ${d.carry < 0 ? 'neg' : ''}">${fmtMoney(d.carry)}</span></div>
+      <div class="money-left">
+        <span class="ml-val ${d.leftover < 0 ? 'neg' : ''}">${fmtMoney(d.leftover)}</span><span class="ml-lbl">${d.leftover < 0 ? 'не хватает' : 'останется'}</span>
+      </div>
+      <div class="money-carry">${carryLine}</div>
     </div>
     ${sortHead}
     <div class="payments">${payments}</div>

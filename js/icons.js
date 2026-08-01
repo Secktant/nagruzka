@@ -32,6 +32,7 @@ const PATHS = {
   caretUp: '<path d="M6 14l6-6 6 6"/>',
   caretDown: '<path d="M6 10l6 6 6-6"/>',
   caretUpDown: '<path d="M8 9l4-4 4 4M8 15l4 4 4-4"/>',
+  pencil: '<path d="M4 20h4L18.5 9.5a2.1 2.1 0 0 0-3-3L5 17z"/>',
 };
 
 // icon('reg')            → <svg class="ic" …>
