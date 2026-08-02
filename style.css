@@ -258,8 +258,7 @@ body {
 .money-left { display: flex; align-items: baseline; gap: 7px; }
 .ml-val { font-size: 22px; font-weight: 700; }
 .ml-lbl { font-size: 12.5px; color: var(--muted); }
-.money-carry { font-size: 12.5px; color: var(--muted); margin-top: 3px; }
-.ml-val.neg, .money-carry .neg { color: var(--red); }
+.ml-val.neg { color: var(--red); }
 
 /* выход из тупика «скрыто фильтром» — ссылка внутри пустого места */
 .linkish {

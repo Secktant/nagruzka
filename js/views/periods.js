@@ -375,12 +375,10 @@ function periodCard(d, today, filter, sorts) {
   // Каждый факт живёт в одном месте: у шкалы — слово зоны, величину нехватки
   // говорит строка денег ниже («−19 200 ₽ не хватает»), поэтому здесь её нет.
   const caption = has ? z.label : 'дохода нет';
-  // carry — накопительный остаток, поэтому «пришло с прошлого» = carry − leftover
-  const prev = d.carry - d.leftover;
-  const carryVal = `<span class="${d.carry < 0 ? 'neg' : ''}">${fmtMoney(d.carry)}</span>`;
-  const carryLine = Math.round(prev) === 0
-    ? `${carryVal} дальше`
-    : `${prev > 0 ? '+' : ''}${fmtMoney(prev)} с прошлого → ${carryVal} дальше`;
+  // Строку переноса («+527 043 ₽ с прошлого → 553 663 ₽ дальше») убрали 02.08.2026
+  // по просьбе юзера: carry копится с начала истории, за полгода вырастает в
+  // шестизначное число, которое ни о чём не говорит и забивает карточку.
+  // Сам carry в движке остаётся — им пользуется график.
   const isCurrent = d.period >= today && today > addDays(d.period, -16);
   const sort = sorts[d.period] || null;
   const shown = arrangePayments(d.payments, filter, sort);
@@ -426,7 +424,6 @@ function periodCard(d, today, filter, sorts) {
       <div class="money-left">
         <span class="ml-val ${d.leftover < 0 ? 'neg' : ''}">${fmtMoney(d.leftover)}</span><span class="ml-lbl">${d.leftover < 0 ? 'не хватает' : 'останется'}</span>
       </div>
-      <div class="money-carry">${carryLine}</div>
     </div>
     ${sortHead}
     <div class="payments">${payments}</div>
