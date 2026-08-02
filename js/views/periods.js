@@ -6,15 +6,22 @@ import { S, putRecord, deleteRecord, putInstallment } from '../store.js';
 import { render } from '../render.js';
 import { $, esc, uid, parseMoney, moneyInput, openModal, closeModal } from '../dom.js';
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
-import { generatePeriods, fmtMoney, fmtPeriod, fmtMonth, groupThousands } from '../engine.js';
+import {
+  generatePeriods, fmtMoney, fmtPeriod, fmtMonth, groupThousands,
+  loadZone, installmentSummaries,
+} from '../engine.js';
 import { todayISO, horizonEnd, fmtPeriodFull, addDays, payKey, payTypeMark } from '../format.js';
 import { icon } from '../icons.js';
 import { renderRail } from './rail.js';
 
-// Режимов у «Периодов» больше нет. До 1.3.0 экран переключался между лентой
-// года и одним месяцем по замеру «окно минус меню» — из-за этого на 150% он
-// схлопывался в две карточки и полэкрана пустело. Год теперь всегда виден в
-// рельсе, а справа всегда один месяц: одна раскладка на все ширины и масштабы.
+// Масштаб выбирает единицу обзора: 150% — месяц крупно, 100–140% — лента года.
+// Это ЯВНОЕ желание пользователя (вернули в 1.4.0 после 1.3.0, где режимов не
+// было вовсе). Отличие от старого isForecast(): ширину не вычисляем арифметикой
+// «окно минус меню» (та ломалась зумом и дублировала константы меню в JS) —
+// спрашиваем ровно тот же медиазапрос, по которому меню становится колонкой.
+// Ниже 1024px года нет никогда: на телефоне лента в 24 карточки бессмысленна.
+export const isYearView = () =>
+  window.matchMedia('(min-width: 1024px)').matches && S.zoomLevel <= 1.4;
 
 // ── Подсветка платежей выбранного банка ──
 // Жест «посмотреть сейчас», а не настройка: живёт в памяти модуля, НЕ в localStorage,
@@ -118,12 +125,23 @@ function openFilterModal() {
 
 export function renderPeriods() {
   renderRail();   // рельс — часть экрана «Периоды», диспетчер о нём не знает
+  const year = isYearView();
   const prefix = `${S.view.y}-${String(S.view.m).padStart(2, '0')}`;
-  $('#month-title').textContent = fmtMonth(S.view.y, S.view.m);
-  const days = [...S.timeline.values()].filter(d => d.period.startsWith(prefix));
+  $('#month-title').textContent = year ? String(S.view.y) : fmtMonth(S.view.y, S.view.m);
+  const days = [...S.timeline.values()].filter(d => year
+    ? d.period.startsWith(`${S.view.y}-`)
+    : d.period.startsWith(prefix));
   const container = $('#periods');
+  const band = $('#month-band');
+  // Полоса итогов — про МЕСЯЦ. В ленте года единица обзора другая, и полоса,
+  // подводящая итог одного месяца из двенадцати, там врала бы.
+  band.hidden = year;
+  container.dataset.scope = year ? 'year' : 'month';
   if (!days.length) {
-    container.innerHTML = `<div class="empty">Нет периодов в этом месяце — история с января 2026.</div>`;
+    container.innerHTML = year
+      ? `<div class="empty">За ${S.view.y} год периодов нет. История с января 2026.</div>`
+      : `<div class="empty">Нет периодов в этом месяце — история с января 2026.</div>`;
+    band.hidden = true;
     return;
   }
   const today = todayISO();
@@ -160,8 +178,12 @@ export function renderPeriods() {
   // ровно ту пустоту, ради которой всё затевалось.
   // Подставляем ВЕСЬ список дорожек, а не число: repeat() не принимает var()
   // счётчиком повторов — такое правило браузер молча выбрасывает.
-  container.style.setProperty('--period-tracks', `repeat(${days.length}, minmax(0, 1fr))`);
+  // В ленте года колонок наоборот «сколько влезет»: там карточек два десятка.
+  container.style.setProperty('--period-tracks', year
+    ? 'repeat(auto-fit, minmax(min(100%, 400px), 1fr))'
+    : `repeat(${days.length}, minmax(0, 1fr))`);
   container.innerHTML = toolbar + days.map(d => periodCard(d, today, filter, sorts)).join('');
+  if (!year) band.innerHTML = monthBandHTML(days);
 
   // назад после пересборки (браузер сам обрежет, если список стал короче)
   scrolled.forEach((top, period) => {
@@ -257,6 +279,84 @@ export function renderPeriods() {
       render();
     });
   });
+}
+
+// ─────────────────── итоги месяца (полоса под карточками) ───────────────────
+// Говорит то, чего пара карточек сказать не может: нагрузку месяца целиком,
+// сводное «занести» по банкам (раньше пользователь складывал два периода в уме)
+// и что идёт следом. Всё считается из уже готового таймлайна — движок не трогаем.
+function monthBandHTML(days) {
+  const income = days.reduce((s, d) => s + d.income, 0);
+  const expense = days.reduce((s, d) => s + d.totalExpense, 0);
+  const load = income > 0 ? expense / income : null;
+  const z = loadZone(load);
+  const pct = load == null ? '—' : Math.round(load * 100) + '%';
+  const fillW = load == null ? 0 : Math.min(load, 1) * INCOME_AT;
+  const overW = load != null && load > 1 ? Math.min(load - 1, 0.3) * INCOME_AT : 0;
+
+  // perBank = НЕоплаченные по банку, поэтому сумма чипов = «сколько ещё нести»
+  const perBank = {};
+  for (const d of days) {
+    for (const [bank, due] of Object.entries(d.perBank)) perBank[bank] = (perBank[bank] || 0) + due;
+  }
+  const banks = Object.entries(perBank).filter(([, due]) => due > 0).sort((a, b) => b[1] - a[1]);
+  const dueTotal = banks.reduce((s, [, due]) => s + due, 0);
+  const chips = banks.map(([bank, due]) =>
+    `<span class="chip due">${esc(bank)} — ${fmtMoney(due)}</span>`).join('');
+
+  // прогресс по ДЕНЬГАМ, а не по числу платежей: 175 ₽ и 32 000 ₽ — не одно событие
+  const paidSum = days.reduce((s, d) =>
+    s + d.payments.filter(p => p.paid).reduce((a, p) => a + p.amount, 0), 0);
+
+  const last = days[days.length - 1].period;
+  const next = [...S.timeline.values()].find(d => d.period > last);
+  const nextLoad = next && next.load != null ? ` · ${Math.round(next.load * 100)}% нагрузки` : '';
+
+  // «закроется» без числительных: склонять «3 рассрочки/5 рассрочек» ради одной
+  // строки не стоит, а смысл («когда развяжемся») передаётся и так.
+  const open = installmentSummaries(S.state, S.timeline).filter(s => !s.closed && s.closePeriod);
+  const closeAll = open.length ? open.map(s => s.closePeriod).sort().pop() : null;
+  const instLine = !closeAll ? ''
+    : open.length === 1
+      ? `Рассрочка закроется ${fmtPeriodFull(closeAll)}`
+      : `Рассрочки закроются к ${fmtPeriodFull(closeAll)}`;
+
+  return `
+    <div class="mb-cell">
+      <div class="mb-lbl">${fmtMonth(S.view.y, S.view.m).split(' ')[0]} целиком</div>
+      <div class="gauge">
+        <span class="gauge-num zone-text-${z.key}">${pct}</span>
+        <span class="gauge-cap">${load == null ? 'дохода нет' : z.label}</span>
+      </div>
+      <div class="track">
+        <div class="track-fill zone-${z.key}" style="width:${fillW}%"></div>
+        ${overW ? `<div class="track-over" style="left:${INCOME_AT}%;width:${overW}%"></div>` : ''}
+        <div class="track-mark" style="left:${INCOME_AT}%"></div>
+        <div class="track-lbl" style="left:${INCOME_AT}%">доход</div>
+      </div>
+      <div class="money">
+        <div class="money-in">${groupThousands(income)} − ${fmtMoney(expense)}</div>
+        <div class="money-left">
+          <span class="ml-val ${income - expense < 0 ? 'neg' : ''}">${fmtMoney(income - expense)}</span>
+          <span class="ml-lbl">${income - expense < 0 ? 'не хватает' : 'останется'}</span>
+        </div>
+      </div>
+    </div>
+    <div class="mb-cell">
+      <div class="mb-lbl">Занести за месяц</div>
+      ${chips
+    ? `<div class="chips mb-chips">${chips}</div>
+         <div class="mb-note">Всего <b>${fmtMoney(dueTotal)}</b> · оплачено ${fmtMoney(paidSum)} из ${fmtMoney(expense)}</div>`
+    : `<div class="mb-note">Всё оплачено — нести нечего.</div>`}
+    </div>
+    <div class="mb-cell">
+      <div class="mb-lbl">Дальше</div>
+      ${next
+    ? `<div class="mb-next">${fmtPeriod(next.period)}</div>
+         <div class="mb-note">${fmtMoney(next.totalExpense)}${nextLoad}</div>`
+    : `<div class="mb-note">Следующий период за горизонтом расчёта.</div>`}
+      ${instLine ? `<div class="mb-note mb-inst">${instLine}</div>` : ''}
+    </div>`;
 }
 
 // Доля дорожки шкалы, занятая доходом: хвост справа отдан перегрузу, поэтому

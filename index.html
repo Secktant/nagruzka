@@ -48,7 +48,13 @@
     <div id="view-periods" class="view">
       <div class="periods-layout">
         <aside id="year-rail" aria-label="Год"></aside>
-        <div id="periods"></div>
+        <div class="periods-main">
+          <div id="periods"></div>
+          <!-- Итоги месяца: то, чего пара карточек сказать не может (нагрузка
+               месяца целиком, «занести» сводно по банкам, ближайший период).
+               В режиме года скрыт — там единицей стал год, а не месяц. -->
+          <section id="month-band" aria-label="Итоги месяца"></section>
+        </div>
       </div>
     </div>
     <div id="view-debts" class="view" hidden></div>
