@@ -112,6 +112,8 @@ body {
    названия при тесноте пробовали — 12 безымянных строк опознать нельзя,
    так что рельс либо влезает с подписями, либо не нужен. */
 .periods-layout { display: flex; flex-direction: column; gap: 14px; }
+/* сетка карточек и полоса итогов — одна колонка справа от рельса */
+.periods-main { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
 
 #year-rail { flex: none; }
 .rail-head { display: flex; align-items: center; margin-bottom: 4px; }
@@ -151,7 +153,6 @@ body {
    колонкой ровно тогда, когда меню тоже колонка. */
 @media (min-width: 1024px) {
   .periods-layout { flex-direction: row; align-items: flex-start; gap: 16px; }
-  .periods-layout > #periods { flex: 1 1 auto; min-width: 0; }
   /* липкий: карточка с одиннадцатью платежами длиннее экрана, и рельс не должен
      уезжать вместе с ней. sticky (не fixed) — единственное, что переживает zoom. */
   #year-rail { width: 72px; position: sticky; top: 12px; }
@@ -170,8 +171,10 @@ body {
   /* min(100%, …) обязателен: без него на телефоне трек шире экрана → горизонтальный скролл */
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 400px), 1fr));
   gap: 16px;
-  /* stretch (дефолт грида) — карточки одного месяца равны по высоте, а низ у них
-     общий: чипы банков стоят на одной линии, а не пляшут по длине списка. */
+  /* start, а НЕ дефолтный stretch: равнять высоту карточек месяца = подставлять
+     под короткий период пустоту высотой в разницу списков. Это уже пробовали и
+     откатывали дважды. Композицию снизу закрывает #month-band. */
+  align-items: start;
 }
 
 .card {
@@ -282,19 +285,53 @@ body {
 
 .payments { border-top: 1px solid var(--border); }
 
-/* Карточки периода — всегда одной высоты (её даёт грид, stretch по строке), а
-   список платежей заполняет свободное место и скроллится при переполнении.
-   Высоту НЕ фиксируем: карточка с тремя платежами не должна занимать место
-   десяти. До 1.3.0 это правило работало только в режиме прогноза; режимов
-   больше нет, поэтому оно базовое.
-   Скоуп на #view-periods обязателен — иначе поедет в карточки Долгов/Настроек. */
-#view-periods .card { display: flex; flex-direction: column; }
-#view-periods .payments {
-  flex: 1 1 auto;
-  min-height: 0;
-  max-height: calc(11 * 40px);   /* месяц-рекордсмен не растягивает соседа по строке */
-  overflow-y: auto;
-  overflow-x: hidden;   /* overflow-y:auto делает overflow-x вычисляемым в auto → ложная горизонт. полоса */
+/* Высоту карточек НЕ равняем. Пробовали дважды (stretch в 1.3.0) — и дважды
+   получали дыру: у периода с шестью платежами под соседа с девятью
+   подставлялось три пустых строки, и это читается как поломка, а разная высота
+   — нет. Композицию снизу закрывает полоса итогов месяца (#month-band), ей это
+   и положено делать, а не растянутым спискам.
+
+   Потолка высоты у списка в режиме месяца тоже нет: карточек всего две, пусть
+   растут — страница прокрутится. Вложенная прокрутка внутри карточки появлялась
+   уже на восьми платежах (на узкой карточке строки двухэтажные) и мешала больше,
+   чем помогала. Потолок остался только в ленте года, где карточек два десятка. */
+
+/* ── Итоги месяца ────────────────────────────────────────────────────────────
+   Три зоны в строку под карточками. Не четыре плитки с числами: плитки — это
+   «дашборд вообще», а тут разговор про конкретный месяц теми же словами и той
+   же шкалой, что в карточке периода, только уровнем выше. */
+#month-band {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.25fr) minmax(0, .9fr);
+  gap: 26px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 16px 18px;
+}
+#month-band[hidden] { display: none; }
+.mb-cell + .mb-cell { border-left: 1px solid var(--border); padding-left: 24px; }
+/* Без капслока: карточка периода говорит обычными словами («останется»,
+   «доход»), и подписи зон полосы должны звучать так же. Капслок остался только
+   в «Долгах», где он часть старой сетки .stats. */
+.mb-lbl { font-size: 12px; color: var(--muted); margin-bottom: 9px; }
+.mb-chips { margin-top: 0; margin-bottom: 12px; }
+.mb-note { font-size: 12.5px; color: var(--muted); line-height: 1.5; font-variant-numeric: tabular-nums; }
+.mb-note b { color: var(--text); font-weight: 600; }
+.mb-next { font-size: 15px; color: var(--text); margin-bottom: 3px; }
+.mb-inst { margin-top: 12px; }
+/* шкала месяца короче карточной: у полосы своя высота, длинный отступ под
+   подпись «доход» тут лишний */
+#month-band .money { margin: 26px 0 0; }
+#month-band .gauge-num { font-size: 24px; }
+#month-band .ml-val { font-size: 21px; }
+
+@media (max-width: 900px) {
+  #month-band { grid-template-columns: 1fr; gap: 18px; }
+  .mb-cell + .mb-cell {
+    border-left: none; padding-left: 0;
+    border-top: 1px solid var(--border); padding-top: 16px;
+  }
 }
 
 .pay {
@@ -1019,6 +1056,12 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
      Множитель --ui-scale: .view масштабируется zoom-ом, значит логическая ширина =
      физическая / масштаб, и на 150% потолок растёт вместе с содержимым. */
   .shell:has(#view-periods:not([hidden])) { max-width: calc(1208px * var(--ui-scale, 1)); }
+  /* Лента года — во всю ширину окна: колонок «сколько влезет» по 400px. Потолок
+     только чтобы на ультрашироком мониторе строка не растянулась до нечитаемой.
+     Условие вешаем на сам #periods (data-scope ставит views/periods.js), а не на
+     класс у .shell: класс пришлось бы снимать при уходе на другие вкладки —
+     на этом уже обжигались с forecast-mode. */
+  .shell:has(#view-periods:not([hidden]) #periods[data-scope="year"]) { max-width: 2400px; }
 
   /* Колонок ровно столько, сколько периодов в месяце: весь список дорожек
      подставляет views/periods.js в --period-tracks (числом нельзя — repeat()
@@ -1039,6 +1082,17 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
      что этот релиз убирает. Худший случай без порога (окно 1024 + 150% +
      развёрнутое меню) даёт узкие карточки, но не сломанные. */
   #periods { grid-template-columns: var(--period-tracks, repeat(2, minmax(0, 1fr))); }
+
+  /* Высоту не равняем и здесь: пробовали — период с одним платежом растягивался
+     под соседа с тремя и получал ту же дыру, что мы чиним в месяце. Правило
+     теперь одно и без исключений: карточка ровно такая, каков её список.
+     Потолок высоты нужен только тут — чтобы месяц-рекордсмен не задал высоту
+     всей строке ленты из двух десятков карточек. */
+  #periods[data-scope="year"] .payments {
+    max-height: calc(11 * 40px);
+    overflow-y: auto;
+    overflow-x: hidden;   /* overflow-y:auto делает overflow-x вычисляемым в auto → ложная горизонт. полоса */
+  }
 }
 
 /* Экран-замок (Шаг 5): полноэкранный гейт до разблокировки биометрией/паролём */

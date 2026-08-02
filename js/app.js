@@ -9,6 +9,7 @@ import {
   getKeyfile, getSyncId, getSyncKey, getLock,
 } from './db.js';
 import { render } from './render.js';
+import { renderPeriods, isYearView } from './views/periods.js';
 import { wireRail } from './views/rail.js';
 import { createSyncEngine, runLockGate } from './sync-ui.js';
 import { isConfigured as syncConfigured } from './sync.js';
@@ -22,14 +23,16 @@ import { S } from './store.js';
 // Ставим до первой отрисовки; экран закрыт стартовым лоадером, так что мигания нет.
 if (localStorage.getItem('navCollapsed')) document.documentElement.classList.add('nav-collapsed');
 
-// Стрелки в «Периодах» листают месяц — всегда. До 1.3.0 они меняли смысл на
-// годовой в режиме прогноза; режимов больше нет, произвольный доступ к месяцу
-// и году даёт рельс.
 function shiftMonth(delta) {
   S.view.m += delta;
   if (S.view.m < 1) { S.view.m = 12; S.view.y--; }
   if (S.view.m > 12) { S.view.m = 1; S.view.y++; }
   render();
+}
+// Стрелки шагают тем, что показано: в ленте года — годом, в месяце — месяцем.
+function periodsNav(delta) {
+  if (isYearView()) { S.view.y += delta; render(); }
+  else shiftMonth(delta);
 }
 
 
@@ -72,10 +75,26 @@ async function main() {
       S.syncEngine.pullAndApply();
     }
   }
-  $('#prev-month').addEventListener('click', () => shiftMonth(-1));
-  $('#next-month').addEventListener('click', () => shiftMonth(1));
-  // Рельс года: произвольный доступ к месяцу, стрелки в топбаре — шаг вперёд/назад.
-  wireRail((y, m) => { S.view.y = y; S.view.m = m; render(); });
+  $('#prev-month').addEventListener('click', () => periodsNav(-1));
+  $('#next-month').addEventListener('click', () => periodsNav(1));
+  // Рельс — индекс того, что показано: в месяце открывает месяц, в ленте года
+  // прокручивает к нему (год-то уже на экране, менять там нечего).
+  wireRail((y, m) => {
+    if (isYearView() && y === S.view.y) {
+      const mm = String(m).padStart(2, '0');
+      // Задачей позже, а НЕ прямо в обработчике: браузер подтягивает прокрутку
+      // к кнопке, получившей фокус от клика, уже после нас, и наш скролл молча
+      // откатывался к нулю. setTimeout, а не requestAnimationFrame: rAF не
+      // выполняется, когда вкладка не отрисовывается, — прокрутка бы просто
+      // не случилась. Без smooth: до декабря идти тысячи пикселей.
+      setTimeout(() => {
+        document.querySelector(`#periods .card[data-drop-period^="${y}-${mm}"]`)
+          ?.scrollIntoView({ block: 'start' });
+      }, 0);
+      return;
+    }
+    S.view.y = y; S.view.m = m; render();
+  });
 
   // масштаб контента (только .view — топбар/таббар не трогаем). Хранится в localStorage.
   const clampZoom = z => Math.min(1.5, Math.max(0.6, Math.round(z * 10) / 10));
@@ -93,11 +112,21 @@ async function main() {
     localStorage.setItem('zoom', String(z));
     return z;
   }
-  // Раскладка «Периодов» больше не зависит от замеров в JS: колонок ровно
-  // столько, сколько периодов в месяце, а тесноту ловит container query в CSS.
-  // Поэтому ни слежения за ресайзом, ни перерисовки на смену масштаба нет.
-  const setZoom = z => { zoom = applyZoom(z); };
+  // Единица обзора зависит от масштаба и от того, широкий ли экран (isYearView).
+  // Перерисовываем только на СМЕНЕ решения, а не на каждый пиксель ресайза;
+  // force — когда перерисовать надо в любом случае (шаг зума внутри одного режима
+  // тоже меняет вёрстку карточек).
+  let wasYear;
+  const syncScope = (force = false) => {
+    const y = isYearView();
+    const flipped = y !== wasYear;
+    wasYear = y;
+    if ((flipped || force) && S.view.tab === 'periods') renderPeriods();
+  };
+  const setZoom = z => { zoom = applyZoom(z); syncScope(true); };
   let zoom = applyZoom(parseFloat(localStorage.getItem('zoom')) || 1);
+  wasYear = isYearView();                 // масштаб уже применён — решение достоверно
+  window.addEventListener('resize', () => syncScope());
   $('#zoom-in').onclick = () => setZoom(zoom + 0.1);
   $('#zoom-out').onclick = () => setZoom(zoom - 0.1);
   // хоткеи Cmd/Ctrl +/−/0 ведём через НАШ масштаб (и глушим браузерный зум,
