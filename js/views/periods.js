@@ -283,7 +283,7 @@ export function renderPeriods() {
 
 // ─────────────────── итоги месяца (полоса под карточками) ───────────────────
 // Говорит то, чего пара карточек сказать не может: нагрузку месяца целиком,
-// сводное «занести» по банкам (раньше пользователь складывал два периода в уме)
+// сводное «внести» по банкам (раньше пользователь складывал два периода в уме)
 // и что идёт следом. Всё считается из уже готового таймлайна — движок не трогаем.
 function monthBandHTML(days) {
   const income = days.reduce((s, d) => s + d.income, 0);
@@ -351,7 +351,7 @@ function monthBandHTML(days) {
       </div>
     </div>
     <div class="mb-cell">
-      <div class="mb-lbl">Занести за месяц</div>
+      <div class="mb-lbl">Внести за месяц</div>
       ${chips
     ? `<div class="chips mb-chips">${chips}</div>
          <div class="mb-note">Всего <b>${fmtMoney(unpaid)}</b> · оплачено ${fmtMoney(paidSum)}</div>`
@@ -406,13 +406,13 @@ function periodCard(d, today, filter, sorts) {
   const nobankDue = d.totalExpense - paidHere - bankedDue;
   const chips = Object.keys(d.bankTouched).sort().map(bank => {
     const due = d.perBank[bank] || 0;
-    const body = due > 0 ? `${esc(bank)} — занести ${fmtMoney(due)}` : `${esc(bank)} — закрыто ✓`;
+    const body = due > 0 ? `${esc(bank)} — внести ${fmtMoney(due)}` : `${esc(bank)} — закрыто ✓`;
     return `<button type="button" class="chip bank-chip ${due > 0 ? 'due' : 'done'}"
       data-bank-chip="${esc(bank)}" data-period="${d.period}"
       title="Показать платежи банка">${body}</button>`;
   }).join('') + (nobankDue >= 1
     ? `<button type="button" class="chip bank-chip due mb-nobank" data-bank-chip="" data-period="${d.period}"
-        title="Показать платежи без банка">Без банка — занести ${fmtMoney(nobankDue)}</button>`
+        title="Показать платежи без банка">Без банка — внести ${fmtMoney(nobankDue)}</button>`
     : '');
 
   return `
