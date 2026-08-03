@@ -141,7 +141,7 @@ export function buildTimeline(state, endISO) {
     const leftover = income - totalExpense;
     carry += leftover;
 
-    // Занести в банк: сумма НЕоплаченных платежей периода по банку.
+    // Внести в банк: сумма НЕоплаченных платежей периода по банку.
     const perBank = {};
     const bankTouched = {};
     for (const x of payments) {
