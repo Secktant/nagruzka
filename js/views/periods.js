@@ -301,12 +301,20 @@ function monthBandHTML(days) {
   }
   const banks = Object.entries(perBank).filter(([, due]) => due > 0).sort((a, b) => b[1] - a[1]);
   const dueTotal = banks.reduce((s, [, due]) => s + due, 0);
-  const chips = banks.map(([bank, due]) =>
-    `<span class="chip due">${esc(bank)} — ${fmtMoney(due)}</span>`).join('');
 
   // прогресс по ДЕНЬГАМ, а не по числу платежей: 175 ₽ и 32 000 ₽ — не одно событие
   const paidSum = days.reduce((s, d) =>
     s + d.payments.filter(p => p.paid).reduce((a, p) => a + p.amount, 0), 0);
+
+  // Сумма чипов ОБЯЗАНА сходиться с «сколько ещё нести». perBank считает только
+  // платежи с проставленным банком, поэтому без этой строки экран показывал
+  // «оплачено 0 из 75 212» и рядом «всего 50 862» — 24 350 ₽ безбанковых
+  // платежей пропадали молча. Досчитываем остаток отдельным чипом.
+  const unpaid = expense - paidSum;
+  const unbanked = unpaid - dueTotal;
+  const chips = banks.map(([bank, due]) =>
+    `<span class="chip due">${esc(bank)} — ${fmtMoney(due)}</span>`).join('')
+    + (unbanked >= 1 ? `<span class="chip due mb-nobank" title="Платежи, у которых не указан банк">Без банка — ${fmtMoney(unbanked)}</span>` : '');
 
   const last = days[days.length - 1].period;
   const next = [...S.timeline.values()].find(d => d.period > last);
@@ -346,7 +354,7 @@ function monthBandHTML(days) {
       <div class="mb-lbl">Занести за месяц</div>
       ${chips
     ? `<div class="chips mb-chips">${chips}</div>
-         <div class="mb-note">Всего <b>${fmtMoney(dueTotal)}</b> · оплачено ${fmtMoney(paidSum)} из ${fmtMoney(expense)}</div>`
+         <div class="mb-note">Всего <b>${fmtMoney(unpaid)}</b> · оплачено ${fmtMoney(paidSum)}</div>`
     : `<div class="mb-note">Всё оплачено — нести нечего.</div>`}
     </div>
     <div class="mb-cell">
@@ -390,13 +398,22 @@ function periodCard(d, today, filter, sorts) {
 
   // Чипы банков кликабельны: тап подсвечивает платежи этого банка в своей карточке
   // (см. bankFocus/applyBankFocus). Поэтому button, а не span — это управляющий элемент.
+  // Платежи без банка в perBank/bankTouched не попадают, поэтому чипы молча не
+  // сходились с суммой периода. Досчитываем остаток отдельным чипом: он такой же
+  // кликабельный (data-bank-chip="" совпадает с data-bank="" у строк без банка).
+  const bankedDue = Object.values(d.perBank).reduce((s, v) => s + v, 0);
+  const paidHere = d.payments.filter(p => p.paid).reduce((s, p) => s + p.amount, 0);
+  const nobankDue = d.totalExpense - paidHere - bankedDue;
   const chips = Object.keys(d.bankTouched).sort().map(bank => {
     const due = d.perBank[bank] || 0;
     const body = due > 0 ? `${esc(bank)} — занести ${fmtMoney(due)}` : `${esc(bank)} — закрыто ✓`;
     return `<button type="button" class="chip bank-chip ${due > 0 ? 'due' : 'done'}"
       data-bank-chip="${esc(bank)}" data-period="${d.period}"
       title="Показать платежи банка">${body}</button>`;
-  }).join('');
+  }).join('') + (nobankDue >= 1
+    ? `<button type="button" class="chip bank-chip due mb-nobank" data-bank-chip="" data-period="${d.period}"
+        title="Показать платежи без банка">Без банка — занести ${fmtMoney(nobankDue)}</button>`
+    : '');
 
   return `
   <section class="card ${isCurrent ? 'current' : ''}" data-drop-period="${d.period}">
