@@ -294,7 +294,7 @@ function monthBandHTML(days) {
   const fillW = load == null ? 0 : Math.min(load, 1) * INCOME_AT;
   const overW = load != null && load > 1 ? Math.min(load - 1, 0.3) * INCOME_AT : 0;
 
-  // perBank = НЕоплаченные по банку, поэтому сумма чипов = «сколько ещё нести»
+  // perBank = НЕоплаченные по банку, поэтому сумма чипов = «сколько ещё вносить»
   const perBank = {};
   for (const d of days) {
     for (const [bank, due] of Object.entries(d.perBank)) perBank[bank] = (perBank[bank] || 0) + due;
@@ -306,7 +306,7 @@ function monthBandHTML(days) {
   const paidSum = days.reduce((s, d) =>
     s + d.payments.filter(p => p.paid).reduce((a, p) => a + p.amount, 0), 0);
 
-  // Сумма чипов ОБЯЗАНА сходиться с «сколько ещё нести». perBank считает только
+  // Сумма чипов ОБЯЗАНА сходиться с «сколько ещё вносить». perBank считает только
   // платежи с проставленным банком, поэтому без этой строки экран показывал
   // «оплачено 0 из 75 212» и рядом «всего 50 862» — 24 350 ₽ безбанковых
   // платежей пропадали молча. Досчитываем остаток отдельным чипом.
@@ -355,7 +355,7 @@ function monthBandHTML(days) {
       ${chips
     ? `<div class="chips mb-chips">${chips}</div>
          <div class="mb-note">Всего <b>${fmtMoney(unpaid)}</b> · оплачено ${fmtMoney(paidSum)}</div>`
-    : `<div class="mb-note">Всё оплачено — нести нечего.</div>`}
+    : `<div class="mb-note">Всё оплачено.</div>`}
     </div>
     <div class="mb-cell">
       <div class="mb-lbl">Дальше</div>
