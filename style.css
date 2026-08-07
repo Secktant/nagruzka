@@ -871,6 +871,25 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 
 /* расписание новой рассрочки */
 .sched-head { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 6px; }
+
+/* Отчёт кнопки «↻ авто». Живёт отдельно от .preview-box: тот пересобирается на
+   каждый ввод, а отчёт должен пережить перерисовку строк после применения плана. */
+.auto-note {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.auto-note.warn { border-color: rgba(226, 109, 90, .45); }
+.auto-note b { font-weight: 600; }
+.ao-list { margin: 8px 0 10px; }
+.ao-row {
+  display: flex; justify-content: space-between;
+  padding: 3px 0; font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+}
 .sched-list {
   border: 1px solid var(--border);
   border-radius: 12px;
