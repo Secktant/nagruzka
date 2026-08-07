@@ -196,7 +196,13 @@ export function buildTimeline(state, endISO) {
 // долг: просрочено (< from) + месяц (from..to) + впереди (> to). Для рассрочки
 // «впереди» = остаток долга МИНУС всё её неоплаченное до конца месяца — тогда
 // недорасписанная рассрочка (расписанием закрыто меньше долга) не занижает итог.
-export function outstanding(state, timeline, from, to) {
+// Просрочка меряется от СЕГОДНЯ, а не от просматриваемого месяца: открыв сентябрь,
+// нельзя объявлять просроченными августовские платежи, до которых ещё неделя.
+// Граница — раньше сегодня И раньше месяца сразу (min): вторая половина условия
+// не даёт задвоения, когда смотришь ПРОШЛЫЙ месяц — иначе его же платежи попали бы
+// и в «просрочено», и в «внести за месяц» на одном экране.
+export function outstanding(state, timeline, from, to, today) {
+  const cutoff = today && today < from ? today : from;
   const add = (acc, bank, amount) => {
     acc.count++; acc.sum += amount;
     const key = bank || '';
@@ -212,7 +218,7 @@ export function outstanding(state, timeline, from, to) {
   for (const day of timeline.values()) {
     for (const p of day.payments) {
       if (p.paid || p.regularId || p.amount <= 0) continue;
-      if (day.period < from) {
+      if (day.period < cutoff) {
         add(overdue, p.bank, p.amount);
         if (p.installmentId) instBefore.set(p.installmentId, (instBefore.get(p.installmentId) || 0) + p.amount);
       } else if (day.period <= to) {

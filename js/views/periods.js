@@ -332,7 +332,7 @@ function monthBandHTML(days) {
   // Обязательства вне месяца. Слева просрочка, справа остаток — границы такие,
   // что три числа не пересекаются: просрочено + месяц + впереди = весь долг.
   const monthName = fmtMonth(S.view.y, S.view.m).split(' ')[0];
-  const out = outstanding(S.state, S.timeline, days[0].period, days[days.length - 1].period);
+  const out = outstanding(S.state, S.timeline, days[0].period, days[days.length - 1].period, todayISO());
   // чипы нейтральные, НЕ оранжевые: оранжевый в приложении значит «нести сейчас»,
   // и если обе строки станут одного цвета, различие «делать» / «иметь в виду» пропадёт
   const bankChips = (perBank) => Object.entries(perBank)
