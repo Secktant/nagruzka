@@ -185,6 +185,60 @@ export function buildTimeline(state, endISO) {
   return timeline;
 }
 
+// Обязательства ВНЕ показанного месяца: что просрочено слева и что осталось справа.
+// from/to — первый и последний период месяца (даты, а не ym: разбирать строки не надо).
+//
+// Считаем ТОЛЬКО разовые платежи и рассрочки. Регулярные — не долг, а настройка
+// из вкладки «Деньги»: они будут всегда, и их сумма «впереди» бесконечна.
+// «Мне должны» (amount < 0) тоже мимо — это приход, а не обязательство.
+//
+// Границы подобраны так, чтобы три числа НЕ пересекались и складывались в весь
+// долг: просрочено (< from) + месяц (from..to) + впереди (> to). Для рассрочки
+// «впереди» = остаток долга МИНУС всё её неоплаченное до конца месяца — тогда
+// недорасписанная рассрочка (расписанием закрыто меньше долга) не занижает итог.
+export function outstanding(state, timeline, from, to) {
+  const add = (acc, bank, amount) => {
+    acc.count++; acc.sum += amount;
+    const key = bank || '';
+    acc.perBank[key] = (acc.perBank[key] || 0) + amount;
+  };
+  const blank = () => ({ count: 0, sum: 0, perBank: {} });
+  const overdue = blank();
+  const once = blank();
+  const inst = blank();
+  // сколько у каждой рассрочки висит неоплаченным до конца месяца включительно
+  const instBefore = new Map();
+
+  for (const day of timeline.values()) {
+    for (const p of day.payments) {
+      if (p.paid || p.regularId || p.amount <= 0) continue;
+      if (day.period < from) {
+        add(overdue, p.bank, p.amount);
+        if (p.installmentId) instBefore.set(p.installmentId, (instBefore.get(p.installmentId) || 0) + p.amount);
+      } else if (day.period <= to) {
+        if (p.installmentId) instBefore.set(p.installmentId, (instBefore.get(p.installmentId) || 0) + p.amount);
+      } else if (!p.installmentId) {
+        add(once, p.bank, p.amount);   // рассрочки берём остатком долга ниже, а не платежами
+      }
+    }
+  }
+
+  for (const s of installmentSummaries(state, timeline)) {
+    if (s.closed) continue;
+    const ahead = Math.max(0, Math.round(s.remaining - (instBefore.get(s.inst.id) || 0)));
+    if (ahead > 0) add(inst, s.inst.bank, ahead);
+  }
+
+  const perBank = {};
+  for (const src of [once.perBank, inst.perBank]) {
+    for (const [bank, v] of Object.entries(src)) perBank[bank] = (perBank[bank] || 0) + v;
+  }
+  return {
+    overdue,
+    ahead: { once, inst, sum: once.sum + inst.sum, perBank },
+  };
+}
+
 // Сводка по рассрочкам из готовой ленты: внесено, осталось, дата закрытия.
 export function installmentSummaries(state, timeline) {
   const out = [];
@@ -272,6 +326,9 @@ export function fmtPeriod(p) {
   const [y, m, d] = p.split('-').map(Number);
   return `${d} ${MONTHS_GEN[m - 1]}`;
 }
+// Месяц в родительном падеже: «после августа», «после мая». Склеивать окончание
+// к именительному нельзя — выйдет «майа»/«июнья».
+export const monthGen = (m) => MONTHS_GEN[m - 1];
 export function fmtMonth(y, m) {
   return `${MONTHS_NOM[m - 1]} ${y}`;
 }

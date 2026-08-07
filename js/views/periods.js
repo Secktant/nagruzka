@@ -8,9 +8,9 @@ import { $, esc, uid, parseMoney, moneyInput, openModal, closeModal } from '../d
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
 import {
   generatePeriods, fmtMoney, fmtPeriod, fmtMonth, groupThousands,
-  loadZone, installmentSummaries,
+  loadZone, installmentSummaries, outstanding, monthGen,
 } from '../engine.js';
-import { todayISO, horizonEnd, fmtPeriodFull, addDays, payKey, payTypeMark } from '../format.js';
+import { todayISO, horizonEnd, fmtPeriodFull, addDays, payKey, payTypeMark, plural } from '../format.js';
 import { icon } from '../icons.js';
 import { renderRail } from './rail.js';
 
@@ -329,9 +329,49 @@ function monthBandHTML(days) {
       ? `Рассрочка закроется ${fmtPeriodFull(closeAll)}`
       : `Рассрочки закроются к ${fmtPeriodFull(closeAll)}`;
 
+  // Обязательства вне месяца. Слева просрочка, справа остаток — границы такие,
+  // что три числа не пересекаются: просрочено + месяц + впереди = весь долг.
+  const monthName = fmtMonth(S.view.y, S.view.m).split(' ')[0];
+  const out = outstanding(S.state, S.timeline, days[0].period, days[days.length - 1].period);
+  // чипы нейтральные, НЕ оранжевые: оранжевый в приложении значит «нести сейчас»,
+  // и если обе строки станут одного цвета, различие «делать» / «иметь в виду» пропадёт
+  const bankChips = (perBank) => Object.entries(perBank)
+    .filter(([, v]) => v > 0)
+    .sort((a, b) => b[1] - a[1])
+    .map(([bank, v]) => bank
+      ? `<span class="chip">${esc(bank)} — ${fmtMoney(v)}</span>`
+      : `<span class="chip mb-nobank" title="Платежи, у которых не указан банк">Без банка — ${fmtMoney(v)}</span>`)
+    .join('');
+
+  const od = out.overdue;
+  const overdueRow = od.count === 0 ? '' : `
+    <div class="mb-alert">
+      <div class="mb-alert-head">
+        <span class="mb-alert-ttl">Просрочено</span>
+        <span class="mb-alert-sum">${fmtMoney(od.sum)}</span>
+        <span class="mb-note">${od.count} ${plural(od.count, 'платёж', 'платежа', 'платежей')} из прошлых месяцев</span>
+      </div>
+      <div class="chips mb-chips">${bankChips(od.perBank)}</div>
+    </div>`;
+
+  const ah = out.ahead;
+  const parts = [];
+  if (ah.inst.count) parts.push(`Рассрочки: ${ah.inst.count} на ${fmtMoney(ah.inst.sum)}`);
+  if (ah.once.count) parts.push(`Разовые: ${ah.once.count} на ${fmtMoney(ah.once.sum)}`);
+  const aheadRow = `
+    <div class="mb-ahead">
+      <div class="mb-lbl">Осталось после ${monthGen(S.view.m)}</div>
+      ${ah.sum > 0
+    ? `<div class="chips mb-chips">${bankChips(ah.perBank)}</div>
+         <div class="mb-note">${parts.join(' · ')} · Всего <b>${fmtMoney(ah.sum)}</b></div>`
+    : `<div class="mb-note">Долгов впереди нет — рассрочки закрыты, разовых не запланировано.</div>`}
+    </div>`;
+
   return `
+    ${overdueRow}
+    <div class="mb-cols">
     <div class="mb-cell">
-      <div class="mb-lbl">${fmtMonth(S.view.y, S.view.m).split(' ')[0]} целиком</div>
+      <div class="mb-lbl">${monthName} целиком</div>
       <div class="gauge">
         <span class="gauge-num zone-text-${z.key}">${pct}</span>
         <span class="gauge-cap">${load == null ? 'дохода нет' : z.label}</span>
@@ -364,7 +404,9 @@ function monthBandHTML(days) {
          <div class="mb-note">${fmtMoney(next.totalExpense)}${nextLoad}</div>`
     : `<div class="mb-note">Следующий период за горизонтом расчёта.</div>`}
       ${instLine ? `<div class="mb-note mb-inst">${instLine}</div>` : ''}
-    </div>`;
+    </div>
+    </div>
+    ${aheadRow}`;
 }
 
 // Доля дорожки шкалы, занятая доходом: хвост справа отдан перегрузу, поэтому

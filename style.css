@@ -314,16 +314,35 @@ body {
    Три зоны в строку под карточками. Не четыре плитки с числами: плитки — это
    «дашборд вообще», а тут разговор про конкретный месяц теми же словами и той
    же шкалой, что в карточке периода, только уровнем выше. */
+/* Читается по времени сверху вниз: просрочено (прошлое) → три зоны месяца
+   (настоящее) → осталось впереди (будущее). */
 #month-band {
-  display: grid;
-  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.25fr) minmax(0, .9fr);
-  gap: 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 16px;
   padding: 16px 18px;
 }
 #month-band[hidden] { display: none; }
+.mb-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(0, 1.25fr) minmax(0, .9fr);
+  gap: 26px;
+}
+.mb-ahead { border-top: 1px solid var(--border); padding-top: 14px; }
+
+/* Просрочка — внутренний блок на surface-2 (как .preview-box и .dt-cell), а не
+   ещё одна рамка внутри карточки: вложенные рамки читаются как поломка вёрстки. */
+.mb-alert { background: var(--surface-2); border-radius: 12px; padding: 10px 13px; }
+.mb-alert-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; margin-bottom: 9px; }
+.mb-alert-ttl { font-size: 13px; font-weight: 600; color: var(--red); }
+.mb-alert-sum { font-size: 17px; font-weight: 700; color: var(--red); font-variant-numeric: tabular-nums; }
+.mb-alert .mb-chips { margin-bottom: 0; }
+/* Цвет = срочность: красный «просрочено» → оранжевый «внести за месяц» →
+   серый «осталось впереди». Просрочка обязана быть громче месяца, а не тише. */
+.mb-alert .chip { border-color: rgba(226, 109, 90, .35); color: #ffb38a; }
 .mb-cell + .mb-cell { border-left: 1px solid var(--border); padding-left: 24px; }
 /* Без капслока: карточка периода говорит обычными словами («останется»,
    «доход»), и подписи зон полосы должны звучать так же. Капслок остался только
@@ -343,7 +362,7 @@ body {
 #month-band .ml-val { font-size: 21px; }
 
 @media (max-width: 900px) {
-  #month-band { grid-template-columns: 1fr; gap: 18px; }
+  .mb-cols { grid-template-columns: 1fr; gap: 18px; }
   .mb-cell + .mb-cell {
     border-left: none; padding-left: 0;
     border-top: 1px solid var(--border); padding-top: 16px;

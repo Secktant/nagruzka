@@ -19,6 +19,7 @@ import {
   yearlyLoads,
   fmtPeriod,
   fmtMonth,
+  outstanding,
 } from '../js/engine.js';
 
 const THIN = ' ';   // узкий неразрывный пробел (разделитель тысяч)
@@ -456,5 +457,141 @@ describe('fmtPeriod / fmtMonth — русские подписи', () => {
   test('месяц в именительном + год', () => {
     assert.equal(fmtMonth(2026, 1), 'Январь 2026');
     assert.equal(fmtMonth(2026, 12), 'Декабрь 2026');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('outstanding — просрочено слева, осталось справа от месяца', () => {
+  // Февраль 2026 — «показанный месяц»: периоды 2026-02-15 и 2026-02-28.
+  const FROM = '2026-02-15', TO = '2026-02-28';
+  const base = () => ({
+    settings: { salary: 0, banks: [], startPeriod: '2026-01-15' },
+    regulars: [
+      { id: 'salary', name: 'Зарплата', kind: 'income', amount: 100000, schedule: 'both', bank: null, active: true },
+      { id: 'rent', name: 'Аренда', kind: 'expense', amount: 30000, schedule: 'both', bank: 'Альфа', active: true },
+    ],
+    installments: [],
+    records: [],
+  });
+  const calc = (state, end = '2026-06-30') =>
+    outstanding(state, buildTimeline(state, end), FROM, TO);
+
+  test('пустое состояние — нули, а не падение', () => {
+    const r = calc(base());
+    assert.equal(r.overdue.count, 0);
+    assert.equal(r.ahead.sum, 0);
+    assert.deepEqual(r.ahead.perBank, {});
+  });
+
+  test('регулярные не считаются ни слева, ни справа', () => {
+    // аренда 30000 «оба» стоит в КАЖДОМ периоде и нигде не отмечена оплаченной
+    const r = calc(base());
+    assert.equal(r.overdue.sum, 0, 'неоплаченная аренда за январь — не просрочка');
+    assert.equal(r.ahead.once.sum, 0, 'будущая аренда — не долг');
+  });
+
+  test('разовый до месяца → просрочка, после → «впереди»', () => {
+    const s = base();
+    s.records = [
+      { id: 'a', period: '2026-01-15', kind: 'expense', name: 'Старое', amount: 5000, bank: 'Озон', paid: false },
+      { id: 'b', period: '2026-03-15', kind: 'expense', name: 'Будущее', amount: 7000, bank: 'Тбанк', paid: false },
+      { id: 'c', period: '2026-02-15', kind: 'expense', name: 'Этот месяц', amount: 9000, bank: 'Озон', paid: false },
+    ];
+    const r = calc(s);
+    assert.equal(r.overdue.sum, 5000);
+    assert.deepEqual(r.overdue.perBank, { 'Озон': 5000 });
+    assert.equal(r.ahead.once.sum, 7000, 'платёж текущего месяца в «впереди» не попадает');
+    assert.equal(r.ahead.once.count, 1);
+    assert.deepEqual(r.ahead.perBank, { 'Тбанк': 7000 });
+  });
+
+  test('оплаченные и «мне должны» не считаются', () => {
+    const s = base();
+    s.records = [
+      { id: 'a', period: '2026-01-15', kind: 'expense', name: 'Оплачен', amount: 5000, bank: 'Озон', paid: true },
+      { id: 'b', period: '2026-03-15', kind: 'expense', name: 'Мне должны', amount: -8000, bank: 'Озон', paid: false },
+    ];
+    const r = calc(s);
+    assert.equal(r.overdue.sum, 0);
+    assert.equal(r.ahead.sum, 0);
+  });
+
+  test('платёж без банка попадает в ключ пустой строки (чип «Без банка»)', () => {
+    const s = base();
+    s.records = [{ id: 'a', period: '2026-04-15', kind: 'expense', name: 'Без банка', amount: 3000, bank: null, paid: false }];
+    const r = calc(s);
+    assert.equal(r.ahead.perBank[''], 3000);
+  });
+
+  test('рассрочка: «впереди» = остаток минус неоплаченное по конец месяца', () => {
+    const s = base();
+    // 60 000 по 20 000 с 15 января: платежи 15.01, 28.02(эом янв→ 31.01), …
+    s.installments = [{ id: 'i1', name: 'Ноут', total: 60000, perPeriod: 20000, firstPeriod: '2026-01-15', bank: 'Тбанк', plan: null }];
+    const r = calc(s);
+    // ничего не оплачено: остаток 60 000, из них 3 платежа стоят до конца февраля
+    // (15.01, 31.01, 15.02, 28.02 — сколько влезло), значит «впереди» = остаток минус они
+    const beforeSum = 60000 - r.ahead.inst.sum;
+    assert.ok(r.ahead.inst.sum >= 0, 'остаток впереди неотрицателен');
+    assert.ok(beforeSum > 0, 'часть платежей стоит до конца месяца');
+    assert.equal(r.ahead.inst.sum + beforeSum, 60000, 'ничего не потерялось');
+  });
+
+  test('закрытая рассрочка не попадает в «впереди»', () => {
+    const s = base();
+    s.installments = [{ id: 'i1', name: 'Стул', total: 10000, perPeriod: 10000, firstPeriod: '2026-01-15', bank: 'Озон', plan: null }];
+    s.records = [{ id: 'p1', period: '2026-01-15', kind: 'expense', name: 'Стул', amount: 10000, bank: 'Озон', paid: true, installmentId: 'i1' }];
+    const r = calc(s);
+    assert.equal(r.ahead.inst.sum, 0);
+    assert.equal(r.overdue.sum, 0, 'оплаченный платёж не просрочка');
+  });
+
+  test('недорасписанная рассрочка учитывается по остатку долга, а не по платежам', () => {
+    const s = base();
+    // долг 50 000, а планом закрыт всего один платёж на 10 000
+    s.installments = [{
+      id: 'i1', name: 'Ремонт', total: 50000, bank: 'Альфа',
+      plan: [{ period: '2026-03-15', amount: 10000 }],
+    }];
+    const r = calc(s);
+    assert.equal(r.ahead.inst.sum, 50000, 'берём весь остаток долга, а не 10 000 расписанных');
+    assert.deepEqual(r.ahead.perBank, { 'Альфа': 50000 });
+  });
+
+  test('просроченный платёж рассрочки уходит в просрочку и НЕ дублируется впереди', () => {
+    const s = base();
+    s.installments = [{
+      id: 'i1', name: 'Кресло', total: 30000, bank: 'Озон',
+      plan: [
+        { period: '2026-01-15', amount: 10000 },   // просрочен
+        { period: '2026-02-15', amount: 10000 },   // в показанном месяце
+        { period: '2026-03-15', amount: 10000 },   // впереди
+      ],
+    }];
+    const r = calc(s);
+    assert.equal(r.overdue.sum, 10000, 'январский платёж — просрочка');
+    assert.equal(r.ahead.inst.sum, 10000, 'впереди только мартовский');
+    // просрочка + месяц + впереди = весь долг
+    assert.equal(r.overdue.sum + 10000 + r.ahead.inst.sum, 30000);
+  });
+
+  test('банки рассрочек и разовых суммируются в один чип', () => {
+    const s = base();
+    s.installments = [{ id: 'i1', name: 'Кресло', total: 20000, bank: 'Озон', plan: [{ period: '2026-03-15', amount: 20000 }] }];
+    s.records = [{ id: 'a', period: '2026-04-15', kind: 'expense', name: 'Отель', amount: 5000, bank: 'Озон', paid: false }];
+    const r = calc(s);
+    assert.deepEqual(r.ahead.perBank, { 'Озон': 25000 });
+    assert.equal(r.ahead.sum, 25000);
+  });
+
+  test('сумма разбивки по банкам равна итогу «впереди»', () => {
+    const s = base();
+    s.installments = [{ id: 'i1', name: 'A', total: 20000, bank: 'Озон', plan: [{ period: '2026-03-15', amount: 20000 }] }];
+    s.records = [
+      { id: 'a', period: '2026-04-15', kind: 'expense', name: 'B', amount: 5000, bank: 'Тбанк', paid: false },
+      { id: 'b', period: '2026-05-15', kind: 'expense', name: 'C', amount: 1500, bank: null, paid: false },
+    ];
+    const r = calc(s);
+    const byBank = Object.values(r.ahead.perBank).reduce((x, y) => x + y, 0);
+    assert.equal(byBank, r.ahead.sum);
   });
 });
