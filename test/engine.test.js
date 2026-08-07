@@ -595,3 +595,42 @@ describe('outstanding — просрочено слева, осталось сп
     assert.equal(byBank, r.ahead.sum);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('outstanding — просрочка меряется от сегодня, а не от месяца', () => {
+  const base = () => ({
+    settings: { salary: 0, banks: [], startPeriod: '2026-01-15' },
+    regulars: [{ id: 'salary', name: 'Зарплата', kind: 'income', amount: 100000, schedule: 'both', bank: null, active: true }],
+    installments: [],
+    records: [
+      { id: 'a', period: '2026-01-15', kind: 'expense', name: 'Январь', amount: 1000, bank: 'Озон', paid: false },
+      { id: 'b', period: '2026-02-15', kind: 'expense', name: 'Февраль', amount: 2000, bank: 'Озон', paid: false },
+      { id: 'c', period: '2026-03-15', kind: 'expense', name: 'Март', amount: 4000, bank: 'Озон', paid: false },
+    ],
+  });
+  const tl = () => buildTimeline(base(), '2026-06-30');
+
+  test('смотрим БУДУЩИЙ месяц: платежи, срок которых не наступил, не просрочены', () => {
+    // сегодня 10 февраля, открыт март: февральский платёж ещё впереди
+    const r = outstanding(base(), tl(), '2026-03-15', '2026-03-31', '2026-02-10');
+    assert.equal(r.overdue.sum, 1000, 'просрочен только январский');
+    assert.equal(r.overdue.count, 1);
+  });
+
+  test('смотрим ТЕКУЩИЙ месяц: просрочка — из прошлых месяцев', () => {
+    const r = outstanding(base(), tl(), '2026-02-15', '2026-02-28', '2026-02-10');
+    assert.equal(r.overdue.sum, 1000);
+  });
+
+  test('смотрим ПРОШЛЫЙ месяц: его платежи не задваиваются в просрочке', () => {
+    // сегодня 10 апреля, открыт февраль — февральский платёж показан в строке
+    // месяца, значит в «просрочено» его быть не должно
+    const r = outstanding(base(), tl(), '2026-02-15', '2026-02-28', '2026-04-10');
+    assert.equal(r.overdue.sum, 1000, 'только январь, февраль не задваивается');
+  });
+
+  test('без today ведём себя как раньше — граница по месяцу', () => {
+    const r = outstanding(base(), tl(), '2026-03-15', '2026-03-31');
+    assert.equal(r.overdue.sum, 3000, 'январь + февраль');
+  });
+});
