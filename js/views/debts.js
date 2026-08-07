@@ -10,6 +10,7 @@ import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
 import { buildTimeline, installmentSummaries, generatePeriods, fmtMoney, fmtPeriod, loadZone } from '../engine.js';
 import { todayISO, horizonEnd, fmtPeriodFull, plural } from '../format.js';
 import { icon } from '../icons.js';
+import { autoDistribute, LEVELS } from '../autoplan.js';
 
 export function renderDebts() {
   const sums = installmentSummaries(S.state, S.timeline);
@@ -208,8 +209,9 @@ function openDebtForm(instId) {
     </div>
     <div class="sched-head">
       <span class="lbl-like">Расписание платежей</span>
-      <button type="button" class="btn small" id="sched-auto" title="Перераспределить автоматически">↻ авто</button>
+      <button type="button" class="btn small" id="sched-auto" title="Подобрать платежи под свободное место в периодах">↻ авто</button>
     </div>
+    <div class="auto-note" id="sched-note" hidden></div>
     <div class="sched-list" id="sched-list"></div>
     <button type="button" class="btn small" id="sched-add">+ платёж</button>` : ''}
     <div class="lbl-like" style="margin-top:12px">Банк</div>
@@ -344,13 +346,108 @@ function openDebtForm(instId) {
   }
 
   // ── новая: расписание ──
+  // Живой ввод остаётся ТУПЫМ — равномерное расписание по «платежу в период».
+  // Умный подбор живёт только на кнопке «↻ авто»: иначе суммы прыгали бы прямо
+  // во время набора, и понять, что ты набираешь, стало бы невозможно.
   function regenSchedule() {
+    autoNote = null; pendingAuto = null;   // заметка описывает ПРЕЖНЮЮ раскладку — устарела
     const total = parseMoney(form.total.value);
     const per = parseMoney(form.perPeriod.value);
     const first = form.firstPeriod.value;
     if (!(total > 0) || !(per > 0)) { schedule = []; renderSchedule(); return; }
     schedule = autoSchedule(total, per, first, endVal());
     renderSchedule();
+  }
+
+  // ── «↻ авто»: подбор под свободное место в периодах ──
+  // Заметка живёт отдельно от #debt-preview: тот пересобирается на каждый ввод,
+  // а заметка должна пережить перерисовку строк после применения плана.
+  let autoNote = null;      // { cls, html } или null
+  let pendingAuto = null;   // план, ждущий подтверждения (перегруз)
+
+  const noteZone = (key, word) => `<span class="zone-text-${key}">«${word}»</span>`;
+
+  function autoFill() {
+    const total = parseMoney(form.total.value);
+    const first = form.firstPeriod.value;
+    const end = endVal();
+    // Для НОВОЙ рассрочки S.timeline и есть чистая база: её самой в состоянии ещё нет,
+    // поэтому конкурировать сама с собой она не может.
+    const periods = [...S.timeline.values()]
+      .filter(d => d.period >= first && (!end || d.period <= end))
+      .map(d => ({ period: d.period, income: d.income, expense: d.totalExpense }));
+
+    const r = autoDistribute({ periods, total });
+    pendingAuto = null;
+
+    if (!r.ok) {
+      autoNote = {
+        cls: 'warn',
+        html: r.reason === 'no-total'
+          ? 'Укажите общую сумму — тогда авто подберёт платежи под свободное место.'
+          : `Между ${fmtPeriodFull(first)}${end ? ` и ${fmtPeriodFull(end)}` : ''} нет дат с доходом. Сдвиньте даты или задайте зарплату во вкладке «Деньги».`,
+      };
+      renderSchedule();
+      return;
+    }
+
+    const head = `<b>${r.count} ${plural(r.count, 'платёж', 'платежа', 'платежей')} по ${fmtMoney(r.payment)}</b>`;
+    const last = r.plan[r.plan.length - 1].period;
+
+    if (r.level === LEVELS[0]) {
+      autoNote = { cls: 'ok', html: `${head}, последний ${fmtPeriodFull(last)}.<br>Все периоды остаются в ${noteZone('green', 'спокойно')}.` };
+    } else if (r.level === LEVELS[1]) {
+      const n = r.loads.filter(l => l > LEVELS[0]).length;
+      autoNote = {
+        cls: 'ok',
+        html: `${head}, последний ${fmtPeriodFull(last)}.<br>В ${noteZone('green', 'спокойно')} не уложилось — ${n} ${plural(n, 'период', 'периода', 'периодов')} ${plural(n, 'станет', 'станут', 'станут')} ${noteZone('yellow', 'ощутимо')}.`,
+      };
+    } else {
+      // Перегруз применяем только по подтверждению — план ждёт в pendingAuto
+      pendingAuto = r.plan;
+      const rows = r.over.map(x =>
+        `<div class="ao-row"><span>${fmtPeriod(x.period)}</span><span class="zone-text-${loadZone(x.load).key}">${Math.round(x.load * 100)}%</span></div>`).join('');
+      const n = r.over.length;
+      // «выше «ощутимо»» — а не «во впритык»: перегруз тоже выше 75%, и одна
+      // формулировка обязана быть верной для обеих зон (проценты в строках
+      // скажут точнее, а цвет — насколько всё плохо).
+      autoNote = {
+        cls: 'warn',
+        html: `Меньше чем на ${head} расписать не выходит.<br>${n} ${plural(n, 'период', 'периода', 'периодов')} ${plural(n, 'уходит', 'уходят', 'уходят')} выше ${noteZone('yellow', 'ощутимо')}:
+          <div class="ao-list">${rows}</div>
+          <button type="button" class="btn small" id="auto-apply">Расписать всё равно</button>`,
+      };
+    }
+
+    if (!pendingAuto) applyAuto(r.plan, r.payment);
+    else renderSchedule();
+  }
+
+  // Применение подобранного плана: расписание + «платёж в период» (чтобы форма
+  // осталась связной — поле показывает ту сумму, что реально стоит в строках).
+  function applyAuto(plan, per) {
+    schedule = plan.map(it => ({ period: it.period, amount: it.amount }));
+    if (per > 0) form.perPeriod.value = fmtNumEditor(per);
+    renderSchedule();
+  }
+
+  // Любая ручная правка строки делает заметку неправдой — гасим её.
+  function dropNote() { autoNote = null; pendingAuto = null; }
+
+  function renderNote() {
+    const el = $('#sched-note');
+    if (!el) return;
+    el.hidden = !autoNote;
+    if (!autoNote) { el.innerHTML = ''; return; }
+    el.className = `auto-note ${autoNote.cls}`;
+    el.innerHTML = autoNote.html;
+    const apply = $('#auto-apply');
+    if (apply) apply.onclick = () => {
+      const plan = pendingAuto;
+      pendingAuto = null;
+      autoNote = { cls: 'ok', html: `Расписано ${plan.length} ${plural(plan.length, 'платежом', 'платежами', 'платежами')} с перегрузкой — проверьте проценты в строках.` };
+      applyAuto(plan, plan[0]?.amount || 0);
+    };
   }
 
   function renderSchedule() {
@@ -364,6 +461,7 @@ function openDebtForm(instId) {
         <span class="sched-load" data-sched-load></span>
         <button type="button" class="icon-btn danger" data-sched-del title="Убрать платёж">×</button>
       </div>`).join('') || '<div class="empty small">Добавьте платёж кнопкой ниже</div>';
+    renderNote();
     updatePreview();
   }
 
@@ -379,7 +477,7 @@ function openDebtForm(instId) {
     regenSchedule();
     ['total', 'perPeriod', 'firstPeriod', 'endPeriod'].forEach(n =>
       form[n].addEventListener((n === 'firstPeriod' || n === 'endPeriod') ? 'change' : 'input', regenSchedule));
-    $('#sched-auto').onclick = regenSchedule;
+    $('#sched-auto').onclick = autoFill;
     $('#sched-add').onclick = () => {
       const per = parseMoney(form.perPeriod.value) || 0;
       const total = parseMoney(form.total.value) || 0;
@@ -401,18 +499,24 @@ function openDebtForm(instId) {
       if (e.target.matches('[data-sched-period]')) {
         if (schedule.some((s, j) => j !== i && s.period === e.target.value)) { renderSchedule(); return; }
         schedule[i].period = e.target.value;
+        dropNote();
         renderSchedule();
       }
     });
     list.addEventListener('input', e => {
       const row = e.target.closest('.sched-row'); if (!row) return;
       const i = Number(row.dataset.si);
-      if (e.target.matches('[data-sched-amount]')) { schedule[i].amount = parseMoney(e.target.value) || 0; updatePreview(); }
+      if (e.target.matches('[data-sched-amount]')) {
+        schedule[i].amount = parseMoney(e.target.value) || 0;
+        dropNote(); renderNote();
+        updatePreview();
+      }
     });
     list.addEventListener('click', e => {
       const del = e.target.closest('[data-sched-del]'); if (!del) return;
       const i = Number(del.closest('.sched-row').dataset.si);
       schedule.splice(i, 1);
+      dropNote();
       renderSchedule();
     });
   }
