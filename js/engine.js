@@ -290,6 +290,27 @@ export function groupThousands(n) {
 }
 export const fmtMoney = (n) => groupThousands(n) + THIN + '₽';
 
+// Доля регулярных платежей в месячном доходе. Месяц = ДВА периода, поэтому
+// «каждый период» стоит вдвое дороже суммы в строке — без этого проценты не
+// сойдутся с итогом. Проценты округляются до десятой у каждой строки, а итог —
+// СУММА уже округлённых: так столбец на экране всегда складывается в итог.
+// Выключенные платежи и нулевые суммы дают pct: null и в итог не идут.
+export function regularShares(regulars, salaryPerPeriod) {
+  const income = salaryPerPeriod > 0 ? salaryPerPeriod * 2 : 0;
+  const rows = new Map();
+  let sum = 0, pct = 0;
+  for (const r of regulars) {
+    if (r.kind !== 'expense') continue;
+    const monthly = r.amount * (r.schedule === 'both' ? 2 : 1);
+    if (!r.active || !(monthly > 0)) { rows.set(r.id, { monthly, pct: null }); continue; }
+    const p = income ? Math.round(monthly / income * 1000) / 10 : null;
+    rows.set(r.id, { monthly, pct: p });
+    sum += monthly;
+    if (p != null) pct += p;
+  }
+  return { income, rows, sum, pct: income ? Math.round(pct * 10) / 10 : null };
+}
+
 // Нагрузка по месяцам: [{ ym:'2026-06', y, m, income, expense, load, zone }]
 export function monthlyLoads(timeline) {
   const byMonth = new Map();

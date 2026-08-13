@@ -8,7 +8,7 @@ import { S, putRegular, deleteRegular, putSettings } from '../store.js';
 import { render } from '../render.js';
 import { $, $$, esc, uid, parseMoney, moneyInput, openModal, closeModal } from '../dom.js';
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
-import { generatePeriods, fmtMoney } from '../engine.js';
+import { generatePeriods, fmtMoney, loadZone, regularShares } from '../engine.js';
 import { todayISO, horizonEnd } from '../format.js';
 
 // Синхронный (в отличие от renderSettings): ничего из IndexedDB ждать не нужно.
@@ -16,6 +16,28 @@ export function renderMoney() {
   const regs = S.state.regulars.filter(r => r.kind === 'expense');
   const salary = S.state.regulars.find(r => r.kind === 'income');
   const schedName = { both: 'каждый период', mid: '15-е число', end: 'конец месяца' };
+
+  // Доля в месячном доходе (месяц = 2 периода). База — плановая зарплата из поля
+  // выше, а не факт конкретного месяца: месяца на этом экране просто нет.
+  const share = regularShares(regs, salary?.amount ?? 0);
+  const fmtPct = (p) => p.toFixed(1).replace('.', ',') + '%';
+  const shareHTML = (r) => {
+    const row = share.rows.get(r.id);
+    if (!row || row.pct == null) return '';
+    // «каждый период» — показываем и месячную сумму, иначе непонятно, почему
+    // 10 000 ₽ в строке дают 14,3%.
+    const tail = r.schedule === 'both' ? ` · ${fmtMoney(row.monthly)}/мес` : ' месяца';
+    return `<span class="pay-share">${fmtPct(row.pct)}${tail}</span>`;
+  };
+  const totalHTML = share.sum > 0 ? `
+      <div class="reg-total">
+        <span class="rt-lbl">Всего регулярных</span>
+        <span class="pay-money">
+          <span class="pay-amount">${fmtMoney(share.sum)}/мес</span>
+          ${share.pct == null ? ''
+            : `<span class="pay-share zone-text-${loadZone(share.pct / 100).key}">${fmtPct(share.pct)} дохода</span>`}
+        </span>
+      </div>` : '';
 
   $('#view-money').innerHTML = `
     <div class="section-head"><h2>Деньги</h2></div>
@@ -38,9 +60,13 @@ export function renderMoney() {
               <span class="bank-tag">${schedName[r.schedule]}</span>
               ${r.bank ? `<span class="bank-tag">${esc(r.bank)}</span>` : ''}
               ${r.active ? '' : '<span class="bank-tag">выключен</span>'}</span>
-            <span class="pay-amount">${fmtMoney(r.amount)}</span>
+            <span class="pay-money">
+              <span class="pay-amount">${fmtMoney(r.amount)}</span>
+              ${shareHTML(r)}
+            </span>
           </span>
         </div>`).join('') || '<div class="empty small">Пока пусто</div>'}
+      ${totalHTML}
       <p class="hint">Изменение суммы влияет только на будущие периоды — история уже записана.</p>
     </section>
 
