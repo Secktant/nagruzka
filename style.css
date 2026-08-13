@@ -394,6 +394,15 @@ body {
 .pay-amount { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
 .pay.paid .pay-amount { color: var(--muted); font-weight: 500; }
 
+/* Правая колонка платежа: сумма и под ней доля от месячного дохода («Деньги»).
+   flex-column, а не два узла в строке: доля длиннее суммы («14,3% · 20 000 ₽/мес»)
+   и должна выравниваться по правому краю вместе с ней. */
+.pay-money { flex: none; display: flex; flex-direction: column; align-items: flex-end; line-height: 1.25; }
+.pay-share { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pay.paid .pay-share { text-decoration: line-through; text-decoration-color: rgba(139,151,168,.5); }
+.reg-total { display: flex; align-items: center; gap: 12px; border-top: 1px solid var(--border); margin-top: 6px; padding-top: 11px; }
+.rt-lbl { flex: 1; font-size: 12.5px; color: var(--muted); }
+
 .pay-type {
   flex: none;
   width: 18px;

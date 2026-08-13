@@ -20,6 +20,7 @@ import {
   fmtPeriod,
   fmtMonth,
   outstanding,
+  regularShares,
 } from '../js/engine.js';
 
 const THIN = ' ';   // узкий неразрывный пробел (разделитель тысяч)
@@ -632,5 +633,72 @@ describe('outstanding — просрочка меряется от сегодн�
   test('без today ведём себя как раньше — граница по месяцу', () => {
     const r = outstanding(base(), tl(), '2026-03-15', '2026-03-31');
     assert.equal(r.overdue.sum, 3000, 'январь + февраль');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('regularShares — доля регулярных в месячном доходе', () => {
+  const reg = (id, amount, schedule, active = true) =>
+    ({ id, kind: 'expense', name: id, amount, schedule, active });
+
+  test('месяц = 2 периода: «каждый период» считается вдвое', () => {
+    const r = regularShares([reg('a', 10000, 'both')], 70000);
+    assert.equal(r.income, 140000);
+    assert.equal(r.rows.get('a').monthly, 20000);
+    assert.equal(r.rows.get('a').pct, 14.3);
+  });
+
+  test('разовое расписание берётся один раз', () => {
+    const r = regularShares([reg('a', 11500, 'mid'), reg('b', 720, 'end')], 70000);
+    assert.equal(r.rows.get('a').monthly, 11500);
+    assert.equal(r.rows.get('a').pct, 8.2);
+    assert.equal(r.rows.get('b').pct, 0.5);
+  });
+
+  test('итог = сумма округлённых процентов строк (столбец складывается)', () => {
+    const regs = [
+      reg('rent', 11500, 'mid'), reg('mort', 10000, 'both'), reg('net', 1130, 'mid'),
+      reg('tel', 720, 'end'), reg('pillow', 7000, 'both'), reg('jkh', 3500, 'mid'),
+    ];
+    const r = regularShares(regs, 70000);
+    const byRow = regs.reduce((s, x) => s + r.rows.get(x.id).pct, 0);
+    assert.equal(r.pct, Math.round(byRow * 10) / 10);
+    assert.equal(r.sum, 50850);
+    assert.equal(r.pct, 36.3);
+  });
+
+  test('выключенный платёж — без процента и мимо итога', () => {
+    const r = regularShares([reg('a', 10000, 'mid'), reg('b', 5000, 'mid', false)], 70000);
+    assert.equal(r.rows.get('b').pct, null);
+    assert.equal(r.rows.get('b').monthly, 5000, 'месячную сумму всё равно считаем');
+    assert.equal(r.sum, 10000);
+    assert.equal(r.pct, r.rows.get('a').pct);
+  });
+
+  test('без зарплаты процентов нет, но сумма есть', () => {
+    const r = regularShares([reg('a', 10000, 'mid')], 0);
+    assert.equal(r.income, 0);
+    assert.equal(r.pct, null);
+    assert.equal(r.rows.get('a').pct, null);
+    assert.equal(r.sum, 10000);
+  });
+
+  test('доходные и нулевые строки не участвуют', () => {
+    const regs = [
+      { id: 'sal', kind: 'income', amount: 70000, schedule: 'both', active: true },
+      reg('zero', 0, 'mid'),
+      reg('a', 14000, 'mid'),
+    ];
+    const r = regularShares(regs, 70000);
+    assert.equal(r.rows.has('sal'), false, 'зарплата — не расход');
+    assert.equal(r.rows.get('zero').pct, null);
+    assert.equal(r.sum, 14000);
+    assert.equal(r.pct, 10);
+  });
+
+  test('перегруз считается честно, без потолка в 100%', () => {
+    const r = regularShares([reg('a', 100000, 'both')], 70000);
+    assert.equal(r.pct, 142.9);
+    assert.equal(loadZone(r.pct / 100).key, 'over');
   });
 });
