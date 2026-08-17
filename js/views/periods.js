@@ -785,19 +785,23 @@ function openIncomeForm(period) {
 
   $('#income-form').onsubmit = async e => {
     e.preventDefault();
-    const domRows = document.querySelectorAll('#income-rows .income-row');
-    for (const el of domRows) {
-      const i = Number(el.dataset.i);
-      const name = el.querySelector('[name=iname]').value.trim();
-      const amount = parseMoney(el.querySelector('[name=iamount]').value);
-      if (!name || !Number.isFinite(amount)) continue;
-      const src = rows[i];
+    const domRows = [...document.querySelectorAll('#income-rows .income-row')]
+      .map(el => ({
+        src: rows[Number(el.dataset.i)],
+        name: el.querySelector('[name=iname]').value.trim(),
+        amount: parseMoney(el.querySelector('[name=iamount]').value),
+      }))
+      .filter(r => r.name && Number.isFinite(r.amount));
+    // Вторая выплата отключает подстановку плана (engine.js:98), поэтому вместе с
+    // ней надо записать и саму зарплату — иначе она молча исчезнет из периода.
+    const multi = domRows.length > 1;
+    for (const { src, name, amount } of domRows) {
       if (src.id) {
         const rec = S.state.records.find(r => r.id === src.id);
         Object.assign(rec, { name, amount });
         await putRecord(S.db, rec);
       } else if (src.virtual) {
-        if (amount !== src.amount || name !== src.name) { // материализуем только изменённый
+        if (multi || amount !== src.amount || name !== src.name) { // материализуем изменённый или сосуществующий
           const rec = { id: uid('i'), period, kind: 'income', name, amount, bank: null, paid: false, regularId: salaryReg?.id };
           S.state.records.push(rec);
           await putRecord(S.db, rec);
