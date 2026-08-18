@@ -408,12 +408,12 @@ function openDebtForm(instId) {
       const rows = r.over.map(x =>
         `<div class="ao-row"><span>${fmtPeriod(x.period)}</span><span class="zone-text-${loadZone(x.load).key}">${Math.round(x.load * 100)}%</span></div>`).join('');
       const n = r.over.length;
-      // «выше «ощутимо»» — а не «во впритык»: перегруз тоже выше 75%, и одна
-      // формулировка обязана быть верной для обеих зон (проценты в строках
-      // скажут точнее, а цвет — насколько всё плохо).
+      // Не «выше «ощутимо»»: потолок подбора 65%, а зона «ощутимо» тянется до
+      // 75% — период на 70% в этот список попадёт, и фраза станет неправдой.
+      // Говорим про сам потолок, а насколько всё плохо — скажут цвет и проценты.
       autoNote = {
         cls: 'warn',
-        html: `Меньше чем на ${head} расписать не выходит.<br>${n} ${plural(n, 'период', 'периода', 'периодов')} ${plural(n, 'уходит', 'уходят', 'уходят')} выше ${noteZone('yellow', 'ощутимо')}:
+        html: `Меньше чем на ${head} расписать не выходит.<br>${n} ${plural(n, 'период', 'периода', 'периодов')} ${plural(n, 'выходит', 'выходят', 'выходят')} за комфортные ${Math.round(LEVELS[LEVELS.length - 1] * 100)}%:
           <div class="ao-list">${rows}</div>
           <button type="button" class="btn small" id="auto-apply">Расписать всё равно</button>`,
       };
