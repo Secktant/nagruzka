@@ -10,14 +10,24 @@
 // говорит словами зон, а не голыми процентами — один словарь с карточками.
 //
 // Один платёж на период: план ключуется датой, две суммы в одну дату не кладём.
-// Значит проверка вместимости у периодов независимая, и подбор сводится к
-// «найти минимальное N, при котором N периодов держат платёж ceil(total/N)».
+// Значит проверка вместимости у периодов независимая, и подбор идёт в два шага:
+//   1) минимальное N, при котором N периодов держат платёж ceil(total/N) — оно
+//      задаёт ДАТУ ЗАКРЫТИЯ (долг лучше гасить раньше);
+//   2) уплотнение: та же дата закрытия, но платежи раскладываются по всем
+//      подходящим датам внутри срока, а не только по самым свободным.
+// Второй шаг и есть ответ на «почему вся сумма упала в один свободный период».
 
-export const LEVELS = [0.5, 0.75];
+// Потолок подбора — 65%, а не 75%: «ощутимо» начинается с 50%, и жить у самой
+// границы красной зоны некомфортно. Всё, что выше, авто не предлагает само —
+// только по подтверждению.
+export const LEVELS = [0.5, 0.65];
 
 // Мельче не дробим: иначе долг в 4 000 ₽ размажется на 36 платежей по 111 ₽.
 // Долг меньше минимума не запрещаем — он просто станет одним платежом.
 export const MIN_PAYMENT = 1000;
+
+// Насколько должен упасть пик, чтобы дробление окупало лишние строки в плане.
+export const SPREAD_GAIN = 0.05;
 
 const payment = (total, n) => Math.ceil(total / n);
 
@@ -52,6 +62,28 @@ function build(picked, total, n) {
   return { plan, payment: a, count: n, peak: Math.max(...loads), loads };
 }
 
+// Минимальный план берёт самые ранние подходящие даты и потому ПЕРЕПРЫГИВАЕТ
+// занятые: два платежа встают на 1-й и 4-й период, а 2-й и 3-й пропущены — срок
+// уже отдан, а нагрузка собрана в две даты. Здесь план уплотняется: занимаем и
+// пропущенные даты (платежи мельче — они наконец влезают), дата закрытия при
+// этом НЕ съезжает, потому что окно ограничено последней датой минимального
+// плана. Самая дробная раскладка даёт самый низкий пик, поэтому идём от неё
+// вниз; принимаем только если пик падает на SPREAD_GAIN — иначе лишние строки
+// в расписании ни за что.
+function spread(usable, base, total, level, minPayment) {
+  const last = base.plan[base.plan.length - 1].period;
+  const window = usable.filter(p => p.period <= last);
+  for (let n = window.length; n > base.count; n--) {
+    const a = payment(total, n);
+    if (a < minPayment || a * (n - 1) >= total) continue;
+    const picked = pickEarliest(window, a, level, n);
+    if (!picked) continue;
+    const r = build(picked, total, n);
+    return r.peak <= base.peak - SPREAD_GAIN ? r : base;
+  }
+  return base;
+}
+
 /**
  * @param {object} o
  * @param {Array<{period:string,income:number,expense:number}>} o.periods
@@ -84,7 +116,10 @@ export function autoDistribute({ periods, total, minPayment = MIN_PAYMENT }) {
     for (let n = 1; n <= nMax; n++) {
       if (!valid(n)) continue;
       const picked = pickEarliest(usable, payment(total, n), level, n);
-      if (picked) return { ok: true, level, over: [], ...build(picked, total, n) };
+      if (picked) {
+        const base = build(picked, total, n);
+        return { ok: true, level, over: [], ...spread(usable, base, total, level, minPayment) };
+      }
     }
   }
 
