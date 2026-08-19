@@ -71,17 +71,17 @@ export function renderMoney() {
     </section>
 
     <section class="card">
-      <div class="section-head"><h3>График нагрузки</h3>
-        <button class="btn" id="go-chart">Открыть</button></div>
-      <p class="hint">Как нагрузка шла по месяцам и годам. На узком экране график живёт здесь — в нижнюю панель шесть вкладок не помещаются.</p>
-    </section>
-
-    <section class="card">
       <h3>Банки</h3>
       <div class="chips" id="money-banks">
         ${S.state.settings.banks.map(b => `<span class="chip">${esc(b)} <button class="chip-x" data-rm-bank="${esc(b)}">×</button></span>`).join('')}
         <button type="button" class="chip pick add" id="money-add-bank">+ банк</button>
       </div>
+    </section>
+
+    <section class="card">
+      <div class="section-head"><h3>График нагрузки</h3>
+        <button class="btn" id="go-chart">Открыть</button></div>
+      <p class="hint">Как нагрузка шла по месяцам и годам. На узком экране график живёт здесь — в нижнюю панель шесть вкладок не помещаются.</p>
     </section>`;
 
   $('#salary-input').addEventListener('input', async e => {
