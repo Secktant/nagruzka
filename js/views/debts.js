@@ -3,7 +3,7 @@
 // Черновой пересчёт расписания идёт по draft-состоянию (buildTimeline), в базу
 // пишется только по «Сохранить».
 
-import { S, recalc, putInstallment, deleteInstallment, deleteRecord } from '../store.js';
+import { S, recalc, putInstallment, deleteInstallment, deleteRecord, logChange, diffFields } from '../store.js';
 import { render } from '../render.js';
 import { $, $$, esc, uid, parseMoney, fmtNumEditor, moneyInput, openModal, closeModal } from '../dom.js';
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
@@ -640,6 +640,7 @@ function openDebtForm(instId) {
   const delBtn = $('#debt-delete');
   if (delBtn) delBtn.onclick = async () => {
     if (!confirm(`Удалить рассрочку «${inst.name}»? История платежей останется обычными записями.`)) return;
+    logChange('installment', 'delete', inst);
     S.state.installments = S.state.installments.filter(i => i.id !== inst.id);
     await deleteInstallment(S.db, inst.id);
     closeModal(); render();
@@ -669,6 +670,7 @@ function openDebtForm(instId) {
         endPeriod: form.endPeriod.value || null,
       };
       S.state.installments.push(rec);
+      logChange('installment', 'create', rec, { now: { total, count: plan.length } });
       await putInstallment(S.db, rec);
     } else {
       // применяем черновик: даты уникальны, неоплаченный хвост пересобираем как plan,
@@ -690,7 +692,13 @@ function openDebtForm(instId) {
       const dropIds = S.state.records.filter(r => r.installmentId === inst.id && !r.paid).map(r => r.id);
       S.state.records = S.state.records.filter(r => !dropIds.includes(r.id));
       for (const id of dropIds) await deleteRecord(S.db, id);
-      Object.assign(inst, { name, perPeriod: per || inst.perPeriod, bank: selectedBank(), total, plan, endPeriod: form.endPeriod?.value || null });
+      // Пересборку расписания не расписываем построчно — dropIds это техника, а не
+      // намерение. В логе одно событие: что стало с суммой, банком и числом платежей.
+      const next = { name, perPeriod: per || inst.perPeriod, bank: selectedBank(), total, plan, endPeriod: form.endPeriod?.value || null };
+      const d = diffFields({ ...inst, count: inst.plan?.length ?? 0 }, { ...next, count: plan.length },
+        ['name', 'total', 'bank', 'endPeriod', 'count']);
+      Object.assign(inst, next);
+      if (d) logChange('installment', 'edit', inst, d);
       await putInstallment(S.db, inst);
     }
     closeModal(); render();
