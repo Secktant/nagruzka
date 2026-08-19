@@ -4,15 +4,10 @@
 // RPC sync_pull/sync_push (перечислить чужие блобы нельзя). См. supabase-setup.sql.
 
 import { SUPABASE_URL, SUPABASE_ANON } from './sync-config.js';
-import { deriveKey, sealGCM, openGCM, randomSalt } from './crypto.js';
+import { deriveKey, sealGCM, openGCM, randomSalt, b64 } from './crypto.js';
 
 export function isConfigured() { return !!(SUPABASE_URL && SUPABASE_ANON); }
 
-// --- base64 ---
-const b64 = {
-  enc: (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))),
-  dec: (str) => Uint8Array.from(atob(str), c => c.charCodeAt(0)),
-};
 // base64url без паддинга — для Sync ID в URL/файле
 const b64url = {
   enc: (bytes) => b64.enc(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''),

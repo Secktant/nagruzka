@@ -289,7 +289,9 @@ function monthBandHTML(days) {
   const income = days.reduce((s, d) => s + d.income, 0);
   const expense = days.reduce((s, d) => s + d.totalExpense, 0);
   const load = income > 0 ? expense / income : null;
-  const z = loadZone(load);
+  // loadZone(null) = null («дохода нет» — не зона). Без дохода полоса всё равно
+  // рисуется, поэтому фолбэк обязателен — тот же, что у карточки периода.
+  const z = loadZone(load) || { key: 'none', label: '—' };
   const pct = load == null ? '—' : Math.round(load * 100) + '%';
   const fillW = load == null ? 0 : Math.min(load, 1) * INCOME_AT;
   const overW = load != null && load > 1 ? Math.min(load - 1, 0.3) * INCOME_AT : 0;

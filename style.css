@@ -582,7 +582,6 @@ body {
 }
 .section-head h2 { font-size: 19px; margin: 0; }
 .section-head h3 { margin: 0; }
-.muted-head { color: var(--muted); font-size: 14px; margin: 22px 0 10px; }
 #view-debts .card, #view-settings .card { margin-bottom: 14px; }
 #view-settings .card h3 { margin: 0 0 10px; font-size: 16px; }
 
@@ -965,7 +964,6 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .ch-bar.zone-over   { fill: var(--over); }
 .ch-bar.zone-none   { fill: var(--border); }
 .ch-bar.cur { stroke: var(--text); stroke-width: 1.5; }
-.ch-divider { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 2 3; opacity: .5; }
 .ch-lbl.sm { font-size: 10px; }
 .ch-lbl.yr { font-size: 10px; fill: var(--text); font-weight: 600; }
 .ch-yr { fill: var(--text); font-size: 17px; font-weight: 700; }
