@@ -91,7 +91,9 @@ const hhmm = (t) => new Date(t).toTimeString().slice(0, 5);
 
 // Строка события. Одна на оба места: ленту вкладки и блок внутри карточки платежа.
 // withDay — печатать ли день рядом со временем (в ленте день уже в заголовке группы).
-function rowHTML(it, withDay = false) {
+// Флаг принимается ОБЪЕКТОМ намеренно: при `list.map(rowHTML)` вторым аргументом
+// прилетает индекс, и позиционный boolean включался бы у всех строк кроме первой.
+function rowHTML(it, { withDay = false } = {}) {
   const a = ACTS[`${it.e}/${it.act}`] || { verb: it.act, ic: 'once', tone: 'muted' };
   const sub = [withDay ? dayLabel(localDay(it.t)) : '', !withDay && it.period ? fmtPeriodFull(it.period) : '']
     .filter(Boolean).join(' · ');
@@ -116,7 +118,7 @@ export function paymentHistoryHTML(recordId) {
   return `
     <div class="pay-hist">
       <div class="lbl-like">История платежа</div>
-      ${items.map(it => rowHTML(it, true)).join('')}
+      ${items.map(it => rowHTML(it, { withDay: true })).join('')}
     </div>`;
 }
 
@@ -146,7 +148,7 @@ export function renderHistory() {
         ${FILTERS.map(f => `<button type="button" class="chip pick ${f.key === filter ? 'sel' : ''}" data-hf="${f.key}">${f.name}</button>`).join('')}
       </div>
       ${days.length
-        ? days.map(g => `<div class="hi-day">${dayLabel(g.day)}</div>${g.rows.map(rowHTML).join('')}`).join('')
+        ? days.map(g => `<div class="hi-day">${dayLabel(g.day)}</div>${g.rows.map(it => rowHTML(it)).join('')}`).join('')
         : `<div class="empty small">${empty}</div>`}
       ${all.length >= HISTORY_LIMIT
         ? `<p class="hint">Лог хранит последние ${HISTORY_LIMIT} событий — более старые подрезаны. Полная картина остаётся в суточном бэкапе.</p>`
