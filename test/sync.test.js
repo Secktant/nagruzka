@@ -14,8 +14,10 @@ import {
   CHUNK_NAGRUZKA,
   CHUNK_META,
   _b64url,
+  AAD_MAIN,
 } from '../js/sync.js';
 import { exportState } from '../js/db.js';
+import { sealGCM, openGCM } from '../js/crypto.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('base64url (_b64url) — url-safe без паддинга', () => {
@@ -115,5 +117,43 @@ describe('exportState — формат резервной копии', () => {
     assert.deepEqual(parsed.regulars, state.regulars);
     assert.deepEqual(parsed.installments, state.installments);
     assert.deepEqual(parsed.records, state.records);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AAD чанка данных. С 1.8.3 это МЕТКА КОНТЕКСТА, а не id ячейки: привязка к id
+// требовала Sync ID при восстановлении бэкапа, а защищала только от подмены
+// блоба другой ячейкой того же ключа — которой в «Нагрузке» нет.
+// Проверяем: новый формат читается, СТАРЫЙ тоже (иначе после обновления
+// приложение не откроет то, что уже лежит на сервере), а чужой ключ — нет.
+describe('AAD чанка: метка вместо id ячейки', () => {
+  const KEY_BITS = new Uint8Array(32).map((_, i) => (i * 7 + 3) & 0xff);
+  const OTHER_BITS = new Uint8Array(32).map((_, i) => (i * 11 + 5) & 0xff);
+  const key = (bits) => crypto.subtle.importKey('raw', bits, 'AES-GCM', false, ['encrypt', 'decrypt']);
+
+  test('AAD_MAIN — это метка чанка, а не хеш от Sync ID', async () => {
+    assert.equal(AAD_MAIN, CHUNK_NAGRUZKA);
+    const id = await deriveChunkId(generateSyncId(), CHUNK_NAGRUZKA);
+    assert.notEqual(AAD_MAIN, id, 'метка не должна зависеть от Sync ID');
+  });
+
+  test('блоб новой схемы открывается без Sync ID', async () => {
+    const k = await key(KEY_BITS);
+    const sealed = await sealGCM(k, '{"app":"nagruzka"}', AAD_MAIN);
+    assert.equal(await openGCM(k, sealed, AAD_MAIN), '{"app":"nagruzka"}');
+  });
+
+  test('блоб старой схемы (AAD = id ячейки) по-прежнему читается своим id', async () => {
+    const k = await key(KEY_BITS);
+    const id = await deriveChunkId('U'.repeat(43), CHUNK_NAGRUZKA);
+    const sealed = await sealGCM(k, '{"старый":true}', id);
+    await assert.rejects(() => openGCM(k, sealed, AAD_MAIN), 'меткой старый блоб не открыть');
+    assert.equal(await openGCM(k, sealed, id), '{"старый":true}');
+  });
+
+  test('чужой ключ не открывает блоб, даже зная метку', async () => {
+    const sealed = await sealGCM(await key(KEY_BITS), '{"мои":"деньги"}', AAD_MAIN);
+    const other = await key(OTHER_BITS);
+    await assert.rejects(() => openGCM(other, sealed, AAD_MAIN));
   });
 });
