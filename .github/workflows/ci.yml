@@ -26,8 +26,28 @@ jobs:
         with:
           node-version: '22'
       - run: npm install
+      # Chromium — ~130 МБ, и качался он на КАЖДЫЙ прогон. Однажды загрузка залипла
+      # на 11 минут при обычной минуте на весь CI, поэтому браузер кэшируем.
+      # Ключ по разрешённой версии playwright из node_modules, а не по package.json:
+      # там диапазон «^1.49.0», и при обновлении внутри диапазона хеш файла не
+      # изменился бы, а браузер уже нужен другой.
+      - name: Версия Playwright для ключа кэша
+        id: pw
+        run: echo "v=$(node -p "require('./node_modules/playwright/package.json').version")" >> "$GITHUB_OUTPUT"
+      - name: Кэш браузера Playwright
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.v }}
+      # Системные библиотеки живут вне кэшируемого каталога, поэтому при попадании
+      # в кэш ставим только их — это быстрый apt, а не загрузка браузера.
       - name: Установить Chromium для Playwright
+        if: steps.pw-cache.outputs.cache-hit != 'true'
         run: npx playwright install --with-deps chromium
+      - name: Системные библиотеки Chromium (браузер из кэша)
+        if: steps.pw-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
       - name: Юнит-тесты (движок, крипта, синк, форматтеры)
         run: node --test
       - name: Полнота ASSETS сервис-воркера
