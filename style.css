@@ -1205,3 +1205,11 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .hi-diff { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 2px; }
 .hi-f { font-size: 12.5px; color: var(--muted); }
 .hi-was { text-decoration: line-through; text-decoration-color: rgba(139,151,168,.5); }
+/* История внутри карточки платежа: тот же формат строки, что в ленте вкладки,
+   отделён от полей формы — это справка, а не то, что правят. */
+.pay-hist {
+  margin-top: 14px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+  max-height: 190px; overflow-y: auto;   /* длинная история не выпихивает кнопки формы за экран */
+}
+.pay-hist .hi-row { padding: 5px 2px; }

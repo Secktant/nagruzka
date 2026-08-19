@@ -12,6 +12,7 @@ import {
 } from '../engine.js';
 import { todayISO, horizonEnd, fmtPeriodFull, addDays, payKey, payTypeMark, plural } from '../format.js';
 import { icon } from '../icons.js';
+import { paymentHistoryHTML } from './history.js';
 import { renderRail } from './rail.js';
 
 // Масштаб выбирает единицу обзора: 150% — месяц крупно, 100–140% — лента года.
@@ -628,6 +629,7 @@ function openPaymentForm(period, key) {
     ${showDate ? `<label style="margin-top:12px">Дата
       <select name="period">${movePeriods.map(pp => `<option value="${pp}" ${pp === period ? 'selected' : ''}>${fmtPeriodFull(pp)}</option>`).join('')}</select>
     </label>` : ''}
+    ${paymentHistoryHTML(isVirtual ? null : p?.id)}
     <div class="form-actions">
       ${!isNew ? `<button type="button" class="btn danger" id="pay-delete">${isVirtual && p.regularId ? 'Убрать из периода' : 'Удалить'}</button>` : ''}
       <span class="spacer"></span>

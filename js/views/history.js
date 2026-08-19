@@ -89,6 +89,37 @@ const localDay = (t) => {
 };
 const hhmm = (t) => new Date(t).toTimeString().slice(0, 5);
 
+// Строка события. Одна на оба места: ленту вкладки и блок внутри карточки платежа.
+// withDay — печатать ли день рядом со временем (в ленте день уже в заголовке группы).
+function rowHTML(it, withDay = false) {
+  const a = ACTS[`${it.e}/${it.act}`] || { verb: it.act, ic: 'once', tone: 'muted' };
+  const sub = [withDay ? dayLabel(localDay(it.t)) : '', !withDay && it.period ? fmtPeriodFull(it.period) : '']
+    .filter(Boolean).join(' · ');
+  return `
+      <div class="hi-row">
+        <span class="hi-t">${hhmm(it.t)}</span>
+        <span class="hi-ic tone-${a.tone}">${icon(a.ic)}</span>
+        <span class="hi-txt">
+          <span class="hi-main">${a.verb} «${esc(it.name || '—')}»</span>
+          ${sub ? `<span class="hi-sub">${esc(sub)}</span>` : ''}
+          ${diffHTML(it)}
+        </span>
+      </div>`;
+}
+
+// Блок «История платежа» для модалки. Пусто — возвращаем пустую строку: заголовок
+// без содержимого только занимает место в и без того длинной форме.
+export function paymentHistoryHTML(recordId) {
+  if (!recordId) return '';
+  const items = (S.state.history || []).filter(it => it.id === recordId).reverse();
+  if (!items.length) return '';
+  return `
+    <div class="pay-hist">
+      <div class="lbl-like">История платежа</div>
+      ${items.map(it => rowHTML(it, true)).join('')}
+    </div>`;
+}
+
 export function renderHistory() {
   const filter = getFilter();
   const acts = FILTERS.find(f => f.key === filter)?.acts;
@@ -103,20 +134,6 @@ export function renderHistory() {
     if (!days.length || days[days.length - 1].day !== day) days.push({ day, rows: [] });
     days[days.length - 1].rows.push(it);
   }
-
-  const rowHTML = (it) => {
-    const a = ACTS[`${it.e}/${it.act}`] || { verb: it.act, ic: 'once', tone: 'muted' };
-    return `
-      <div class="hi-row">
-        <span class="hi-t">${hhmm(it.t)}</span>
-        <span class="hi-ic tone-${a.tone}">${icon(a.ic)}</span>
-        <span class="hi-txt">
-          <span class="hi-main">${a.verb} «${esc(it.name || '—')}»</span>
-          ${it.period ? `<span class="hi-sub">${fmtPeriodFull(it.period)}</span>` : ''}
-          ${diffHTML(it)}
-        </span>
-      </div>`;
-  };
 
   const empty = all.length
     ? 'Событий такого типа пока нет.'
