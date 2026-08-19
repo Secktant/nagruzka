@@ -60,7 +60,10 @@ export async function initStore(seed) {
 }
 
 async function writeAll(db, data) {
-  await tx(db, 'kv', 'readwrite', s => s.put(data.settings, 'settings'));
+  await tx(db, 'kv', 'readwrite', s => {
+    s.put(data.settings, 'settings');
+    s.put(data.history || [], 'history');   // лог не массив записей, а одно значение — ему хватает kv
+  });
   for (const name of STORES) {
     await tx(db, name, 'readwrite', s => {
       s.clear();
@@ -70,13 +73,14 @@ async function writeAll(db, data) {
 }
 
 export async function loadState(db) {
-  const [settings, regulars, installments, records] = await Promise.all([
+  const [settings, regulars, installments, records, history] = await Promise.all([
     getKV(db, 'settings'),
     getAll(db, 'regulars'),
     getAll(db, 'installments'),
     getAll(db, 'records'),
+    getKV(db, 'history'),
   ]);
-  return { settings, regulars, installments, records: sortRecords(records) };
+  return { settings, regulars, installments, records: sortRecords(records), history: history || [] };
 }
 
 // --- Локальное шифрование «на месте» (этап 4b) ---
@@ -95,6 +99,7 @@ export async function loadVault(db, key) {
     regulars: d.regulars || [],
     installments: d.installments || [],
     records: sortRecords(d.records || []),
+    history: d.history || [],   // сейф, записанный до 1.8.0, лога не содержит
   };
 }
 export const hasVault = (db) => getKV(db, 'vault').then(v => !!v);
@@ -102,7 +107,9 @@ export const hasVault = (db) => getKV(db, 'vault').then(v => !!v);
 // Переход на сейф: стираем плейнтекст-данные и ставим маркер (чтобы initStore не сеял).
 export async function clearPlaintextStores(db) {
   for (const name of STORES) await tx(db, name, 'readwrite', s => s.clear());
-  await tx(db, 'kv', 'readwrite', s => { s.delete('settings'); s.put(true, 'vaultActive'); });
+  // history тоже плейнтекст и тоже персональные данные — уносим вместе с settings,
+  // иначе после включения сейфа лог остался бы лежать в открытом виде.
+  await tx(db, 'kv', 'readwrite', s => { s.delete('settings'); s.delete('history'); s.put(true, 'vaultActive'); });
 }
 
 // Сохранение БЕЗ ключа (синк/пароль ещё не настроены) — прежний плейнтекст-путь.
@@ -141,5 +148,6 @@ export function exportState(state) {
     regulars: state.regulars,
     installments: state.installments,
     records: state.records,
+    history: state.history || [],
   }, null, 2);
 }
