@@ -32,6 +32,11 @@ svg.ic {
 
 body {
   margin: 0;
+  /* Страница всегда не ниже экрана. На короткой вкладке («История» с парой
+     событий) документ иначе короче окна, и в iOS-PWA фиксированная панель
+     встаёт не по нижней кромке экрана, а с провалом под собой. */
+  min-height: 100vh;
+  min-height: 100dvh;
   background: var(--bg);
   color: var(--text);
   font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
