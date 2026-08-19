@@ -71,6 +71,12 @@ export function renderMoney() {
     </section>
 
     <section class="card">
+      <div class="section-head"><h3>График нагрузки</h3>
+        <button class="btn" id="go-chart">Открыть</button></div>
+      <p class="hint">Как нагрузка шла по месяцам и годам. На узком экране график живёт здесь — в нижнюю панель шесть вкладок не помещаются.</p>
+    </section>
+
+    <section class="card">
       <h3>Банки</h3>
       <div class="chips" id="money-banks">
         ${S.state.settings.banks.map(b => `<span class="chip">${esc(b)} <button class="chip-x" data-rm-bank="${esc(b)}">×</button></span>`).join('')}
@@ -96,6 +102,8 @@ export function renderMoney() {
     if (d) { logChange('settings', 'edit', salary, d); putSettings(S.db, S.state.settings); }
     salaryAtFocus = salary.amount;
   });
+
+  $('#go-chart').onclick = () => { S.view.tab = 'chart'; render(); };
 
   $('#add-regular').onclick = () => openRegularForm(null);
   $$('#view-money [data-reg]').forEach(el => {

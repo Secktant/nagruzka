@@ -14,7 +14,12 @@ import { renderSettings } from './views/settings.js';
 export function render() {
   recalc();
   $('#month-nav').style.visibility = S.view.tab === 'periods' ? 'visible' : 'hidden';
-  $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === S.view.tab));
+  // На узком экране вкладка «График» из панели убрана, вход — из «Денег». Тогда на
+  // экране графика в панели не горело бы ничего: подсвечиваем родителя. Признак —
+  // сама скрытость кнопки (offsetParent), чтобы не дублировать брейкпоинт в JS.
+  const chartInMoney = S.view.tab === 'chart' && !$('.tab[data-tab="chart"]').offsetParent;
+  $$('.tab').forEach(t => t.classList.toggle('active',
+    t.dataset.tab === S.view.tab || (chartInMoney && t.dataset.tab === 'money')));
   $$('.view').forEach(v => v.hidden = v.id !== `view-${S.view.tab}`);
   if (S.view.tab === 'periods') renderPeriods();
   if (S.view.tab === 'debts') renderDebts();

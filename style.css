@@ -1005,10 +1005,11 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   min-width: 0;   /* шесть вкладок: подписи ужимаются, а не выпихивают панель за экран */
 }
 .tab .ico { font-size: calc(19px * var(--ui-scale, 1)); }
-/* На узком экране шести подписям тесно: режем горизонтальный отступ, а не текст —
-   «Настро…» вместо «Настройки» читается хуже, чем плотная панель. */
-@media (max-width: 430px) {
-  .tab { padding-left: calc(9px * var(--ui-scale, 1)); padding-right: calc(9px * var(--ui-scale, 1)); }
+/* Нижняя панель держит пять вкладок: «График» из неё убран — он про обзор, а не
+   про ежедневные действия, и открывается из «Денег» (там же настраивается сама
+   нагрузка). В меню слева, где места хватает, вкладка остаётся на месте. */
+@media (max-width: 1023px) {
+  .tab[data-tab="chart"] { display: none; }
 }
 .tab.active { color: var(--accent); }
 .tab[disabled] { opacity: .45; cursor: default; }
