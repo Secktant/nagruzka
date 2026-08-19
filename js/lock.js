@@ -3,13 +3,9 @@
 // либо разворачивается биометрией из wrap(K), либо выводится из пароля Argon2.
 // Регистрация per-device, опт-ин. PRF появился в Safari 18/iOS 18; нет PRF → только пароль.
 
-import { sealGCM, openGCM, importAesKey } from './crypto.js';
+import { sealGCM, openGCM, importAesKey, b64 } from './crypto.js';
 
 const te = new TextEncoder();
-const b64 = {
-  enc: (b) => btoa(String.fromCharCode(...new Uint8Array(b))),
-  dec: (s) => Uint8Array.from(atob(s), c => c.charCodeAt(0)),
-};
 const PRF_SALT = te.encode('nagruzka:prf:v1'); // фиксированная PRF-соль (метка приложения)
 const rpId = () => location.hostname;
 

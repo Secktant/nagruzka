@@ -23,6 +23,13 @@ function argon2() {
   return h.argon2id;
 }
 
+// base64 ↔ байты. Живёт здесь, а не в замке и синке по копии в каждом: оба и так
+// импортируют этот модуль, а две копии одного кодека — приглашение к расхождению.
+export const b64 = {
+  enc: (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))),
+  dec: (str) => Uint8Array.from(atob(str), c => c.charCodeAt(0)),
+};
+
 // 32 случайных байта для keyfile.
 export function generateKeyfile() {
   return crypto.getRandomValues(new Uint8Array(32));
