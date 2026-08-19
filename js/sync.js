@@ -27,6 +27,27 @@ export function isValidSyncId(str) {
 const teId = new TextEncoder();
 export const CHUNK_NAGRUZKA = 'nagruzka:main'; // единственный чанк Нагрузки
 export const CHUNK_META = 'meta';              // строка-мета: канонная соль аккаунта
+// AAD чанка данных = МЕТКА КОНТЕКСТА, а не id ячейки.
+//
+// Раньше привязывались к id (SHA-256(SyncID‖метка)), и из-за этого восстановление
+// суточного бэкапа требовало ТРЕТЬЕГО артефакта — Sync ID — вдобавок к паролю и
+// keyfile. Защищала эта привязка ровно от одного: подмены блоба другой ячейкой
+// ТОГО ЖЕ ключа. В «Нагрузке» такой ячейки нет — шифрованный чанк один, а мета
+// хранит соль открытым текстом. От чужих данных защищает ключ (свой пароль +
+// keyfile), а от отката на свою же старую версию AAD не защищал никогда: метка
+// у всех версий одна.
+//
+// Адресацию это не трогает: куда писать, по-прежнему решает chunkId ниже.
+export const AAD_MAIN = CHUNK_NAGRUZKA;
+
+// Чтение с откатом: новый формат (метка), затем старый (id ячейки). Нужно, чтобы
+// после обновления приложение открыло то, что уже лежит на сервере; ближайшая
+// запись пересоберёт блоб по-новому сама, без ручных миграций.
+async function openChunk(key, bytes, chunkId) {
+  try { return await openGCM(key, bytes, AAD_MAIN); }
+  catch { return await openGCM(key, bytes, chunkId); }
+}
+
 export async function deriveChunkId(syncId, label) {
   const digest = await crypto.subtle.digest('SHA-256', teId.encode(syncId + label));
   return b64url.enc(new Uint8Array(digest));
@@ -126,7 +147,7 @@ export class SyncEngine {
     // 2. данные из чанка / миграция / первый push
     const chunk = await pull(this.chunkId);
     if (chunk) {
-      const json = await openGCM(this.key, b64.dec(chunk.blob), this.chunkId); // бросит при неверном пароле
+      const json = await openChunk(this.key, b64.dec(chunk.blob), this.chunkId); // бросит при неверном пароле
       this.version = chunk.version;
       await this.opts.applyStateJSON(json);
     } else {
@@ -137,7 +158,7 @@ export class SyncEngine {
         const json = await openGCM(this.key, b64.dec(legacy.blob)); // проверка пароля + миграция
         await this.opts.applyStateJSON(json);
       }
-      await this.pushNow();                                // создаём чанк (с AAD) из текущего состояния
+      await this.pushNow();                                // создаём чанк (AAD = метка) из текущего состояния
     }
     this.status('synced');
   }
@@ -147,7 +168,7 @@ export class SyncEngine {
     if (!this.key) return;
     this.status('syncing');
     try {
-      const blob = await sealGCM(this.key, this.opts.getStateJSON(), this.chunkId);
+      const blob = await sealGCM(this.key, this.opts.getStateJSON(), AAD_MAIN);
       const r = await push(this.chunkId, b64.enc(this.salt), b64.enc(blob), this.version);
       if (r.ok) {
         this.version = r.version;
@@ -174,7 +195,7 @@ export class SyncEngine {
     }
     try {
       if (remote && remote.version > this.version) {
-        const json = await openGCM(this.key, b64.dec(remote.blob), this.chunkId); // расшифровка
+        const json = await openChunk(this.key, b64.dec(remote.blob), this.chunkId); // расшифровка
         this.version = remote.version;
         await this.opts.applyStateJSON(json);
       }
@@ -191,7 +212,7 @@ export class SyncEngine {
     if (!this.key) throw new Error('Синхронизация не активна');
     const kf = this.opts.getKeyfile() || null;
     const newKey = await deriveKey(newPass, kf, this.salt);
-    const blob = await sealGCM(newKey, this.opts.getStateJSON(), this.chunkId);
+    const blob = await sealGCM(newKey, this.opts.getStateJSON(), AAD_MAIN);
     const r = await push(this.chunkId, b64.enc(this.salt), b64.enc(blob), this.version);
     if (!r.ok) throw new Error('На сервере есть несинхронизированные изменения — подожди пару секунд и повтори');
     this.key = newKey;

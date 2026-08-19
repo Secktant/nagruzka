@@ -11,7 +11,7 @@ import { $, esc, parseMoney, withBusy } from '../dom.js';
 import { icon } from '../icons.js';
 import { todayISO } from '../format.js';
 import { generateKeyfile, encryptText, encryptTextWithKey, decryptToText, inspect } from '../crypto.js';
-import { isConfigured as syncConfigured, generateSyncId, isValidSyncId, deriveChunkId, CHUNK_NAGRUZKA } from '../sync.js';
+import { isConfigured as syncConfigured, generateSyncId, isValidSyncId, deriveChunkId, CHUNK_NAGRUZKA, AAD_MAIN } from '../sync.js';
 import { createSyncEngine, updateSyncStatusUI, openLockSetup } from '../sync-ui.js';
 import {
   exportState,
@@ -200,15 +200,23 @@ export async function renderSettings() {
       const pass = prompt('Пароль от копии (обычно — пароль синхронизации):');
       if (!pass) return;
       const useKf = meta.needsKeyfile ? kf : null;
-      // Бэкап чанка привязан к AAD=id чанка; ручной экспорт и legacy-бэкап — без AAD.
-      // Пробуем с AAD, при неудаче — без (неверный пароль провалит обе → корректная ошибка).
-      const chunkAad = sid ? await deriveChunkId(sid, CHUNK_NAGRUZKA) : null;
-      let json;
-      try {
-        json = await decryptToText(bytes, pass, useKf, chunkAad);
-      } catch (e1) {
-        if (!chunkAad) throw e1;
-        json = await decryptToText(bytes, pass, useKf); // ретрай без AAD
+      // Три формата файла, пробуем по очереди: свежий бэкап чанка (AAD = метка),
+      // старый бэкап (AAD = id чанка, требует Sync ID на устройстве) и ручной
+      // экспорт (без AAD). Неверный пароль провалит все три → корректная ошибка.
+      const oldAad = sid ? await deriveChunkId(sid, CHUNK_NAGRUZKA) : null;
+      const variants = [AAD_MAIN, oldAad, undefined].filter((v, i) => i !== 1 || v);
+      let json = null, lastErr = null;
+      for (const aad of variants) {
+        try { json = await decryptToText(bytes, pass, useKf, aad); break; }
+        catch (err) { lastErr = err; }
+      }
+      if (json === null) {
+        // Без Sync ID старый бэкап не открыть в принципе — а сообщение про пароль
+        // отправляет человека перебирать пароли. Говорим, чего именно не хватает.
+        throw new Error(sid ? lastErr.message
+          : 'Не удалось расшифровать. Если это бэкап из синхронизации, сделанный до 1.8.3, '
+            + 'он привязан к Sync ID — вставьте Sync ID в настройках синхронизации и повторите. '
+            + 'Иначе проверьте пароль и keyfile.');
       }
       // что внутри — показываем перед заменой
       const data = JSON.parse(json);
