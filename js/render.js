@@ -8,6 +8,7 @@ import { renderChart } from './views/chart.js';
 import { renderDebts } from './views/debts.js';
 import { renderPeriods } from './views/periods.js';
 import { renderMoney } from './views/money.js';
+import { renderHistory } from './views/history.js';
 import { renderSettings } from './views/settings.js';
 
 export function render() {
@@ -19,5 +20,6 @@ export function render() {
   if (S.view.tab === 'debts') renderDebts();
   if (S.view.tab === 'chart') renderChart();
   if (S.view.tab === 'money') renderMoney();
+  if (S.view.tab === 'history') renderHistory();
   if (S.view.tab === 'settings') renderSettings();
 }

@@ -20,6 +20,7 @@ const ASSETS = [
   'js/sync-ui.js',
   'js/views/chart.js',
   'js/views/debts.js',
+  'js/views/history.js',
   'js/views/money.js',
   'js/views/periods.js',
   'js/views/rail.js',
