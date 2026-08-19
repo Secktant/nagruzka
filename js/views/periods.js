@@ -2,7 +2,7 @@
 // drag-and-drop между периодами, формы платежа и дохода. Мутации → put*/delete* +
 // render(); виртуальные платежи материализуются записями при правке (materialize).
 
-import { S, putRecord, deleteRecord, putInstallment } from '../store.js';
+import { S, putRecord, deleteRecord, putInstallment, logChange, diffFields } from '../store.js';
 import { render } from '../render.js';
 import { $, esc, uid, parseMoney, moneyInput, openModal, closeModal } from '../dom.js';
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
@@ -12,6 +12,7 @@ import {
 } from '../engine.js';
 import { todayISO, horizonEnd, fmtPeriodFull, addDays, payKey, payTypeMark, plural } from '../format.js';
 import { icon } from '../icons.js';
+import { paymentHistoryHTML } from './history.js';
 import { renderRail } from './rail.js';
 
 // Масштаб выбирает единицу обзора: 150% — месяц крупно, 100–140% — лента года.
@@ -258,6 +259,7 @@ export function renderPeriods() {
           rec.period = target;
           if (inst.plan) inst.plan = inst.plan.filter(it => it.period !== data.src);
           S.state.records.sort(byPeriodAsc);
+          logChange('record', 'edit', rec, { was: { period: data.src }, now: { period: target } });
           await putRecord(S.db, rec);
           await putInstallment(S.db, inst);
         } else {                                         // виртуальный слот плана → пере-датировать
@@ -267,13 +269,17 @@ export function renderPeriods() {
           if (!slot) return;
           slot.period = target;
           inst.plan.sort(byPeriodAsc);
+          // Слот плана — не запись, у него нет id: событие вешаем на саму рассрочку.
+          logChange('installment', 'edit', inst, { was: { period: data.src }, now: { period: target } });
           await putInstallment(S.db, inst);
         }
       } else if (data.rec) {                             // разовый платёж
         const rec = S.state.records.find(r => r.id === data.rec);
         if (!rec) return;
+        const from = data.src;
         rec.period = target;
         S.state.records.sort(byPeriodAsc);
+        logChange('record', 'edit', rec, { was: { period: from }, now: { period: target } });
         await putRecord(S.db, rec);
       }
       render();
@@ -537,21 +543,27 @@ function findPayment(period, key) {
 
 async function togglePaid(fullKey, checked) {
   const [period, type, id] = fullKey.split('|');
+  // Ради этого события пункт 4 и затевался: «когда я поставил галку».
+  const act = checked ? 'paid' : 'unpaid';
   if (type === 'r') {
     const rec = S.state.records.find(r => r.id === id);
     if (!rec) return;
     rec.paid = checked;
+    logChange('record', act, rec);
     await putRecord(S.db, rec);
   } else {
     const p = findPayment(period, `${type}|${id}`);
     if (!p) return;
-    await materialize(period, p, { paid: checked });
+    await materialize(period, p, { paid: checked }, act);
   }
   render();
 }
 
 // Виртуальный платёж превращаем в запись (с привязкой к источнику).
-async function materialize(period, p, overrides = {}) {
+// act — что именно сделал человек (галка, правка, скрытие): само по себе
+// превращение виртуального в запись событие техническое, в лог ему не надо.
+// Логируем ДО putRecord: персист один, и запись лога обязана попасть в тот же снимок.
+async function materialize(period, p, overrides = {}, act = null) {
   const rec = {
     id: uid('m'), period, kind: 'expense', name: p.name,
     amount: p.amount, bank: p.bank, paid: p.paid, ...overrides,
@@ -560,6 +572,7 @@ async function materialize(period, p, overrides = {}) {
   if (p.installmentId) rec.installmentId = p.installmentId;
   S.state.records.push(rec);
   S.state.records.sort((a, b) => a.period < b.period ? -1 : 1);
+  if (act) logChange('record', act, rec);
   await putRecord(S.db, rec);
   return rec;
 }
@@ -616,6 +629,7 @@ function openPaymentForm(period, key) {
     ${showDate ? `<label style="margin-top:12px">Дата
       <select name="period">${movePeriods.map(pp => `<option value="${pp}" ${pp === period ? 'selected' : ''}>${fmtPeriodFull(pp)}</option>`).join('')}</select>
     </label>` : ''}
+    ${paymentHistoryHTML(isVirtual ? null : p?.id)}
     <div class="form-actions">
       ${!isNew ? `<button type="button" class="btn danger" id="pay-delete">${isVirtual && p.regularId ? 'Убрать из периода' : 'Удалить'}</button>` : ''}
       <span class="spacer"></span>
@@ -654,7 +668,7 @@ function openPaymentForm(period, key) {
   if (delBtn) delBtn.onclick = async () => {
     if (isVirtual) {
       if (p.regularId) { // скрыть регулярный в этом периоде
-        await materialize(period, p, { skipped: true, paid: false });
+        await materialize(period, p, { skipped: true, paid: false }, 'delete');
       } else {
         alert('Платёж по рассрочке нельзя удалить отсюда — правьте рассрочку на вкладке «Долги».');
         return;
@@ -664,8 +678,10 @@ function openPaymentForm(period, key) {
       if (p.regularId) { // вместо удаления — скрыть, иначе вернётся виртуальный
         const rec = S.state.records.find(r => r.id === p.id);
         rec.skipped = true; rec.paid = false;
+        logChange('record', 'delete', rec);
         await putRecord(S.db, rec);
       } else {
+        logChange('record', 'delete', p);
         S.state.records = S.state.records.filter(r => r.id !== p.id);
         await deleteRecord(S.db, p.id);
       }
@@ -698,6 +714,7 @@ function openPaymentForm(period, key) {
       const rec = { id: uid('p'), period, kind: 'expense', name, amount, bank, paid: false };
       S.state.records.push(rec);
       S.state.records.sort((a, b) => a.period < b.period ? -1 : 1);
+      logChange('record', 'create', rec, { now: { amount, bank } });
       await putRecord(S.db, rec);
     } else if (isInst) {
       // платёж рассрочки: дата меняет либо слот плана (виртуальный), либо период записи (реальный)
@@ -709,11 +726,17 @@ function openPaymentForm(period, key) {
             alert('У рассрочки уже есть платёж на эту дату.'); return;
           }
           const slot = inst.plan.find(it => it.period === period);
-          if (slot) { slot.period = newPeriod; slot.amount = amount; inst.plan.sort((a, b) => a.period < b.period ? -1 : 1); }
+          if (slot) {
+            const d = diffFields({ period, amount: slot.amount }, { period: newPeriod, amount }, ['period', 'amount']);
+            slot.period = newPeriod; slot.amount = amount;
+            inst.plan.sort((a, b) => a.period < b.period ? -1 : 1);
+            if (d) logChange('installment', 'edit', inst, d);
+          }
           await putInstallment(S.db, inst);
         }
       } else {
         const rec = S.state.records.find(r => r.id === p.id);
+        const d = diffFields(rec, { amount, bank, period: newPeriod }, ['amount', 'bank', 'period']);
         rec.amount = amount; rec.bank = bank;
         if (newPeriod !== rec.period) {                 // переезд на факт-дату, старый слот плана убрать
           if (inst?.plan) inst.plan = inst.plan.filter(it => it.period !== rec.period);
@@ -721,18 +744,22 @@ function openPaymentForm(period, key) {
           S.state.records.sort((a, b) => a.period < b.period ? -1 : 1);
           if (inst) await putInstallment(S.db, inst);
         }
+        if (d) logChange('record', 'edit', rec, d);
         await putRecord(S.db, rec);
       }
     } else if (isVirtual) {
-      await materialize(period, p, { name, amount, bank });
+      await materialize(period, p, { name, amount, bank }, 'edit');
     } else {
       const rec = S.state.records.find(r => r.id === p.id);
+      const newPeriod = canMove ? f.get('period') : null;
+      const d = diffFields(rec, { name, amount, bank, period: newPeriod || rec.period },
+        ['name', 'amount', 'bank', 'period']);
       Object.assign(rec, { name, amount, bank });
-      const newPeriod = f.get('period');
-      if (canMove && newPeriod && newPeriod !== rec.period) {
+      if (newPeriod && newPeriod !== rec.period) {
         rec.period = newPeriod;                       // перенос на другую дату
         S.state.records.sort((a, b) => a.period < b.period ? -1 : 1);
       }
+      if (d) logChange('record', 'edit', rec, d);
       await putRecord(S.db, rec);
     }
     closeModal(); render();
@@ -800,21 +827,28 @@ function openIncomeForm(period) {
     for (const { src, name, amount } of domRows) {
       if (src.id) {
         const rec = S.state.records.find(r => r.id === src.id);
+        const d = diffFields(rec, { name, amount }, ['name', 'amount']);
         Object.assign(rec, { name, amount });
+        if (d) logChange('record', 'edit', rec, d);
         await putRecord(S.db, rec);
       } else if (src.virtual) {
         if (multi || amount !== src.amount || name !== src.name) { // материализуем изменённый или сосуществующий
           const rec = { id: uid('i'), period, kind: 'income', name, amount, bank: null, paid: false, regularId: salaryReg?.id };
           S.state.records.push(rec);
+          // План стал фактом: в логе это правка дохода, а не создание из ниоткуда.
+          if (amount !== src.amount) logChange('record', 'edit', rec, { was: { amount: src.amount }, now: { amount } });
           await putRecord(S.db, rec);
         }
       } else {
         const rec = { id: uid('i'), period, kind: 'income', name, amount, bank: null, paid: false };
         S.state.records.push(rec);
+        logChange('record', 'create', rec, { now: { amount } });
         await putRecord(S.db, rec);
       }
     }
     for (const id of deleted) {
+      const gone = S.state.records.find(r => r.id === id);
+      if (gone) logChange('record', 'delete', gone);
       S.state.records = S.state.records.filter(r => r.id !== id);
       await deleteRecord(S.db, id);
     }

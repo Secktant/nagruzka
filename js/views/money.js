@@ -4,7 +4,7 @@
 // ИНВАРИАНТ: здесь нет и не должно быть криптографии — ни crypto.js, ни ключевых
 // функций db.js, ни sync-ui. Всё это осталось в settings.js.
 
-import { S, putRegular, deleteRegular, putSettings } from '../store.js';
+import { S, putRegular, deleteRegular, putSettings, logChange, diffFields } from '../store.js';
 import { render } from '../render.js';
 import { $, $$, esc, uid, parseMoney, moneyInput, openModal, closeModal } from '../dom.js';
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
@@ -71,6 +71,12 @@ export function renderMoney() {
     </section>
 
     <section class="card">
+      <div class="section-head"><h3>График нагрузки</h3>
+        <button class="btn" id="go-chart">Открыть</button></div>
+      <p class="hint">Как нагрузка шла по месяцам и годам. На узком экране график живёт здесь — в нижнюю панель шесть вкладок не помещаются.</p>
+    </section>
+
+    <section class="card">
       <h3>Банки</h3>
       <div class="chips" id="money-banks">
         ${S.state.settings.banks.map(b => `<span class="chip">${esc(b)} <button class="chip-x" data-rm-bank="${esc(b)}">×</button></span>`).join('')}
@@ -84,6 +90,20 @@ export function renderMoney() {
     salary.amount = v;
     await putRegular(S.db, salary); // без render — не теряем фокус при наборе
   });
+
+  // Лог зарплаты — по 'change' (уход из поля), а НЕ по 'input': набор «70000»
+  // это шесть событий input, и лог забился бы промежуточными 7, 70, 700…
+  // Отсчёт ведём от суммы на момент фокуса, поэтому в истории одна честная пара.
+  let salaryAtFocus = salary?.amount;
+  $('#salary-input').addEventListener('focus', () => { salaryAtFocus = salary?.amount; });
+  $('#salary-input').addEventListener('change', () => {
+    if (!salary) return;
+    const d = diffFields({ amount: salaryAtFocus }, { amount: salary.amount }, ['amount']);
+    if (d) { logChange('settings', 'edit', salary, d); putSettings(S.db, S.state.settings); }
+    salaryAtFocus = salary.amount;
+  });
+
+  $('#go-chart').onclick = () => { S.view.tab = 'chart'; render(); };
 
   $('#add-regular').onclick = () => openRegularForm(null);
   $$('#view-money [data-reg]').forEach(el => {
@@ -151,6 +171,7 @@ function openRegularForm(regId) {
   const delBtn = $('#reg-delete');
   if (delBtn) delBtn.onclick = async () => {
     if (!confirm(`Удалить «${reg.name}»? История останется, будущие периоды очистятся.`)) return;
+    logChange('regular', 'delete', reg);
     S.state.regulars = S.state.regulars.filter(r => r.id !== reg.id);
     await deleteRegular(S.db, reg.id);
     closeModal(); render();
@@ -173,9 +194,15 @@ function openRegularForm(regId) {
         .find(p => p >= todayISO());
       const rec = { id: uid('reg'), kind: 'expense', since, ...data };
       S.state.regulars.push(rec);
+      logChange('regular', 'create', rec, { now: { amount: data.amount, schedule: data.schedule } });
       await putRegular(S.db, rec);
     } else {
+      // Вкл/выкл — отдельное событие, а не правка поля: в ленте это разные строки
+      // («выключен Каршеринг» читается, «active: true → false» нет).
+      if (reg.active !== data.active) logChange('regular', data.active ? 'on' : 'off', reg);
+      const d = diffFields(reg, data, ['name', 'amount', 'schedule', 'bank']);
       Object.assign(reg, data);
+      if (d) logChange('regular', 'edit', reg, d);
       await putRegular(S.db, reg);
     }
     closeModal(); render();

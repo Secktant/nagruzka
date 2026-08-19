@@ -1002,8 +1002,15 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   display: flex; flex-direction: column; align-items: center; gap: calc(3px * var(--ui-scale, 1));
   cursor: pointer;
   padding: calc(2px * var(--ui-scale, 1)) calc(18px * var(--ui-scale, 1));
+  min-width: 0;   /* шесть вкладок: подписи ужимаются, а не выпихивают панель за экран */
 }
 .tab .ico { font-size: calc(19px * var(--ui-scale, 1)); }
+/* Нижняя панель держит пять вкладок: «График» из неё убран — он про обзор, а не
+   про ежедневные действия, и открывается из «Денег» (там же настраивается сама
+   нагрузка). В меню слева, где места хватает, вкладка остаётся на месте. */
+@media (max-width: 1023px) {
+  .tab[data-tab="chart"] { display: none; }
+}
 .tab.active { color: var(--accent); }
 .tab[disabled] { opacity: .45; cursor: default; }
 /* заголовок и «свернуть» — только в режиме колонки */
@@ -1164,3 +1171,45 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 .lock-box .btn { width: 100%; justify-content: center; }
 .lock-err { color: var(--red); font-size: 13px; min-height: 18px; }
 .lock-status { color: var(--muted); font-size: 14px; min-height: 18px; }
+
+/* ─── Вкладка «История» ─── */
+/* Лента событий: время слева колонкой, иконка-маркер, текст. Строки бордерами,
+   а не карточками: список плотный и длинный, карточки на каждое событие
+   превратили бы его в лоскутное одеяло. */
+.hi-filters { margin-bottom: 6px; }
+.hi-day {
+  font-size: 12px; color: var(--muted);
+  margin: 16px 0 2px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.hi-day:first-of-type { border-top: none; padding-top: 0; margin-top: 8px; }
+.hi-row {
+  display: flex; align-items: baseline; gap: 10px;
+  padding: 7px 2px;
+}
+.hi-t {
+  flex: none; width: 40px;
+  font-size: 12.5px; color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.hi-ic { flex: none; line-height: 1; }
+.hi-ic.tone-green  { color: var(--green); }
+.hi-ic.tone-yellow { color: var(--yellow); }
+.hi-ic.tone-red    { color: var(--red); }
+.hi-ic.tone-accent { color: var(--accent); }
+.hi-ic.tone-muted  { color: var(--muted); }
+.hi-txt { flex: 1; min-width: 0; }
+.hi-main { display: block; }
+.hi-sub { font-size: 12.5px; color: var(--muted); }
+/* «было → стало»: по строке на поле, зачёркнутое старое значение приглушено */
+.hi-diff { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 2px; }
+.hi-f { font-size: 12.5px; color: var(--muted); }
+.hi-was { text-decoration: line-through; text-decoration-color: rgba(139,151,168,.5); }
+/* История внутри карточки платежа: тот же формат строки, что в ленте вкладки,
+   отделён от полей формы — это справка, а не то, что правят. */
+.pay-hist {
+  margin-top: 14px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+  max-height: 190px; overflow-y: auto;   /* длинная история не выпихивает кнопки формы за экран */
+}
+.pay-hist .hi-row { padding: 5px 2px; }
