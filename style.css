@@ -951,26 +951,6 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
 #add-income-row { margin-top: 2px; }
 
 /* ── график ── */
-.chart { width: 100%; height: auto; display: block; }
-.ch-grid { stroke: var(--border); stroke-width: 1; }
-.ch-zero { stroke: var(--red); stroke-width: 1; stroke-dasharray: 4 4; }
-.ch-today { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 3 4; opacity: .7; }
-.ch-area { fill: rgba(110,168,254,.12); stroke: none; }
-.ch-line { fill: none; stroke: var(--accent); stroke-width: 2.2; stroke-linejoin: round; }
-.ch-dot { fill: var(--accent); }
-.ch-dot.min { fill: var(--yellow); }
-.ch-lbl { fill: var(--muted); font-size: 11.5px; }
-.ch-lbl.accent { fill: var(--accent); }
-.ch-bar { transition: opacity .15s; }
-.ch-bar:hover { opacity: .85; }
-.ch-bar.zone-green  { fill: var(--green); }
-.ch-bar.zone-yellow { fill: var(--yellow); }
-.ch-bar.zone-red    { fill: var(--red); }
-.ch-bar.zone-over   { fill: var(--over); }
-.ch-bar.zone-none   { fill: var(--border); }
-.ch-bar.cur { stroke: var(--text); stroke-width: 1.5; }
-.ch-lbl.sm { font-size: 10px; }
-.ch-lbl.yr { font-size: 10px; fill: var(--text); font-weight: 600; }
 .ch-yr { fill: var(--text); font-size: 17px; font-weight: 700; }
 .ch-empty { fill: var(--muted); font-size: 15px; }
 
@@ -1010,12 +990,6 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   min-width: 0;   /* шесть вкладок: подписи ужимаются, а не выпихивают панель за экран */
 }
 .tab .ico { font-size: calc(19px * var(--ui-scale, 1)); }
-/* Нижняя панель держит пять вкладок: «График» из неё убран — он про обзор, а не
-   про ежедневные действия, и открывается из «Денег» (там же настраивается сама
-   нагрузка). В меню слева, где места хватает, вкладка остаётся на месте. */
-@media (max-width: 1023px) {
-  .tab[data-tab="chart"] { display: none; }
-}
 .tab.active { color: var(--accent); }
 .tab[disabled] { opacity: .45; cursor: default; }
 /* заголовок и «свернуть» — только в режиме колонки */
@@ -1218,3 +1192,8 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   max-height: 190px; overflow-y: auto;   /* длинная история не выпихивает кнопки формы за экран */
 }
 .pay-hist .hi-row { padding: 5px 2px; }
+
+/* Зарплата: поле и кнопка «Сохранить» в строку. Кнопка неактивна, пока сумма
+   не изменилась — правка уходит на сервер и в историю только по нажатию. */
+.salary-edit { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.salary-edit .num { flex: 0 0 180px; }

@@ -15,7 +15,7 @@ export const S = {
   vaultSalt: null,        // соль этого ключа (Uint8Array) — для синка и .nz
   currentKeyfile: null,   // кэш keyfile в памяти (для движка, который читает синхронно)
   syncStatus: 'off',      // off | locked | syncing | synced | offline | conflict | error
-  view: { y: TODAY.getFullYear(), m: TODAY.getMonth() + 1, tab: 'periods', chartYear: TODAY.getFullYear() },
+  view: { y: TODAY.getFullYear(), m: TODAY.getMonth() + 1, tab: 'periods' },
   zoomLevel: 1,           // текущий масштаб (для развилки раскладки «Периодов»)
 };
 

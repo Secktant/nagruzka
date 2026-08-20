@@ -311,39 +311,6 @@ export function regularShares(regulars, salaryPerPeriod) {
   return { income, rows, sum, pct: income ? Math.round(pct * 10) / 10 : null };
 }
 
-// Нагрузка по месяцам: [{ ym:'2026-06', y, m, income, expense, load, zone }]
-export function monthlyLoads(timeline) {
-  const byMonth = new Map();
-  for (const d of timeline.values()) {
-    const ym = d.period.slice(0, 7);
-    if (!byMonth.has(ym)) byMonth.set(ym, { ym, income: 0, expense: 0 });
-    const e = byMonth.get(ym);
-    e.income += d.income;
-    e.expense += d.totalExpense;
-  }
-  return [...byMonth.values()].map(e => {
-    const load = e.income > 0 ? e.expense / e.income : null;
-    const [y, m] = e.ym.split('-').map(Number);
-    return { ...e, y, m, load, zone: loadZone(load) };
-  });
-}
-
-// Нагрузка по годам: [{ year, income, expense, load, zone }]
-export function yearlyLoads(timeline) {
-  const byYear = new Map();
-  for (const d of timeline.values()) {
-    const y = Number(d.period.slice(0, 4));
-    if (!byYear.has(y)) byYear.set(y, { year: y, income: 0, expense: 0 });
-    const e = byYear.get(y);
-    e.income += d.income;
-    e.expense += d.totalExpense;
-  }
-  return [...byYear.values()].map(e => {
-    const load = e.income > 0 ? e.expense / e.income : null;
-    return { ...e, load, zone: loadZone(load) };
-  });
-}
-
 const MONTHS_GEN = ['января','февраля','марта','апреля','мая','июня',
   'июля','августа','сентября','октября','ноября','декабря'];
 const MONTHS_NOM = ['Январь','Февраль','Март','Апрель','Май','Июнь',

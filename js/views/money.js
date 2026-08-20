@@ -45,7 +45,10 @@ export function renderMoney() {
     <section class="card">
       <h3>Зарплата</h3>
       <label class="inline-label">Сумма за период, ₽
-        ${moneyInput('', salary?.amount ?? 70000, 'id="salary-input"')}
+        <span class="salary-edit">
+          ${moneyInput('', salary?.amount ?? 70000, 'id="salary-input"')}
+          <button type="button" class="btn primary" id="salary-save" disabled>Сохранить</button>
+        </span>
       </label>
       <p class="hint">Подставляется в каждый период (15-е и конец месяца). Факт правится в самом периоде.</p>
     </section>
@@ -77,33 +80,31 @@ export function renderMoney() {
         <button type="button" class="chip pick add" id="money-add-bank">+ банк</button>
       </div>
     </section>
+`;
 
-    <section class="card">
-      <div class="section-head"><h3>График нагрузки</h3>
-        <button class="btn" id="go-chart">Открыть</button></div>
-      <p class="hint">Как нагрузка шла по месяцам и годам. На узком экране график живёт здесь — в нижнюю панель шесть вкладок не помещаются.</p>
-    </section>`;
+  // Зарплата сохраняется КНОПКОЙ, а не по ходу набора. Раньше писали на каждое
+  // событие input: «70000» — это шесть сохранений, шесть пушей на сервер и шесть
+  // строк в истории (7, 70, 700…). Кнопка делает намерение явным: одна правка —
+  // одна запись в логе и один синк.
+  const salaryInput = $('#salary-input');
+  const salarySave = $('#salary-save');
+  const salaryWas = salary?.amount ?? 0;
+  const typed = () => parseMoney(salaryInput.value);
+  const dirty = () => { const v = typed(); return Number.isFinite(v) && v > 0 && v !== salaryWas; };
 
-  $('#salary-input').addEventListener('input', async e => {
-    const v = parseMoney(e.target.value);
-    if (!(v > 0) || !salary) return;
-    salary.amount = v;
-    await putRegular(S.db, salary); // без render — не теряем фокус при наборе
+  salaryInput.addEventListener('input', () => { salarySave.disabled = !dirty(); });
+  // Enter в поле = нажать кнопку: поле не в форме, само по себе Enter ничего не сделает.
+  salaryInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && dirty()) { e.preventDefault(); salarySave.click(); }
   });
 
-  // Лог зарплаты — по 'change' (уход из поля), а НЕ по 'input': набор «70000»
-  // это шесть событий input, и лог забился бы промежуточными 7, 70, 700…
-  // Отсчёт ведём от суммы на момент фокуса, поэтому в истории одна честная пара.
-  let salaryAtFocus = salary?.amount;
-  $('#salary-input').addEventListener('focus', () => { salaryAtFocus = salary?.amount; });
-  $('#salary-input').addEventListener('change', () => {
-    if (!salary) return;
-    const d = diffFields({ amount: salaryAtFocus }, { amount: salary.amount }, ['amount']);
-    if (d) { logChange('settings', 'edit', salary, d); putSettings(S.db, S.state.settings); }
-    salaryAtFocus = salary.amount;
-  });
-
-  $('#go-chart').onclick = () => { S.view.tab = 'chart'; render(); };
+  salarySave.onclick = async () => {
+    if (!salary || !dirty()) return;
+    salary.amount = typed();
+    logChange('settings', 'edit', salary, { was: { amount: salaryWas }, now: { amount: salary.amount } });
+    await putRegular(S.db, salary);
+    render();   // проценты регулярных считаются от зарплаты — пересчитать
+  };
 
   $('#add-regular').onclick = () => openRegularForm(null);
   $$('#view-money [data-reg]').forEach(el => {
