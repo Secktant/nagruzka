@@ -4,7 +4,7 @@
 //   ТРИВИАЛ — багфиксы/мелочи, МИНОР — новые фичи, МАЖОР — крупные изменения.
 // Это ЕДИНСТВЕННЫЙ источник версии (её же показывает метка в углу) и ключ
 // инвалидации кэша: activate удаляет все кэши, кроме текущего CACHE.
-const CACHE = 'nagruzka-1.8.3';
+const CACHE = 'nagruzka-1.9.0';
 const ASSETS = [
   './',
   'index.html',
@@ -18,7 +18,6 @@ const ASSETS = [
   'js/render.js',
   'js/chips.js',
   'js/sync-ui.js',
-  'js/views/chart.js',
   'js/views/debts.js',
   'js/views/history.js',
   'js/views/money.js',

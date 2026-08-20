@@ -15,8 +15,6 @@ import {
   installmentSummaries,
   groupThousands,
   fmtMoney,
-  monthlyLoads,
-  yearlyLoads,
   fmtPeriod,
   fmtMonth,
   outstanding,
@@ -403,48 +401,6 @@ describe('groupThousands / fmtMoney — формат чисел', () => {
     assert.equal(fmtMoney(1000), `1000${THIN}₽`);
     assert.equal(fmtMoney(50000), `50${THIN}000${THIN}₽`);
     assert.equal(fmtMoney(-50000), `${MINUS}50${THIN}000${THIN}₽`);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-describe('monthlyLoads / yearlyLoads', () => {
-  const state = {
-    settings: { salary: 0, banks: [], startPeriod: '2026-01-15' },
-    regulars: [
-      { id: 'salary', name: 'ЗП', kind: 'income', amount: 100000, schedule: 'both', bank: null, active: true },
-      { id: 'rent', name: 'Аренда', kind: 'expense', amount: 25000, schedule: 'both', bank: 'Альфа', active: true },
-    ],
-    installments: [],
-    records: [],
-  };
-  const tl = buildTimeline(state, '2026-02-28');
-
-  test('агрегация по месяцам: доход/расход/нагрузка', () => {
-    const m = monthlyLoads(tl);
-    const jan = m.find(x => x.ym === '2026-01');
-    // два периода в январе: доход 200000, расход 50000
-    assert.equal(jan.income, 200000);
-    assert.equal(jan.expense, 50000);
-    assert.equal(jan.load, 0.25);
-    assert.equal(jan.zone.key, 'green');
-    assert.equal(jan.y, 2026);
-    assert.equal(jan.m, 1);
-  });
-
-  test('агрегация по годам', () => {
-    const [y] = yearlyLoads(tl);
-    assert.equal(y.year, 2026);
-    assert.equal(y.income, 400000); // 4 периода × 100000
-    assert.equal(y.expense, 100000);
-    assert.equal(y.load, 0.25);
-  });
-
-  test('load=null при нулевом доходе в месяце', () => {
-    const s2 = structuredClone(state);
-    s2.regulars = s2.regulars.filter(r => r.kind !== 'income');
-    const m = monthlyLoads(buildTimeline(s2, '2026-01-31'));
-    assert.equal(m[0].load, null);
-    assert.equal(m[0].zone, null);
   });
 });
 
