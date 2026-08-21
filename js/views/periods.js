@@ -402,7 +402,10 @@ function monthBandHTML(days) {
       <div class="mb-lbl">Внести за месяц</div>
       ${chips
     ? `<div class="chips mb-chips">${chips}</div>
-         <div class="mb-note">Всего <b>${fmtMoney(unpaid)}</b> · оплачено ${fmtMoney(paidSum)}</div>`
+         <!-- «Осталось», а НЕ «Всего»: рядом стоит «оплачено», и «всего» читается как
+              итог месяца — тогда непонятно, почему оплачено больше. Это две части
+              одной суммы: осталось + оплачено = расход месяца целиком. -->
+         <div class="mb-note">Осталось <b>${fmtMoney(unpaid)}</b> · оплачено ${fmtMoney(paidSum)}</div>`
     : `<div class="mb-note">Всё оплачено.</div>`}
     </div>
     <div class="mb-cell">
