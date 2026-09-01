@@ -264,7 +264,8 @@ export function renderPeriods() {
           await putInstallment(S.db, inst);
         } else {                                         // виртуальный слот плана → пере-датировать
           if (!inst.plan) return;
-          if (inst.plan.some(it => it.period === target)) return; // дата уже занята этой рассрочкой
+          // На занятую дату переносить МОЖНО: движок складывает слоты одной даты
+          // в один платёж. Раньше здесь стоял молчаливый отказ.
           const slot = inst.plan.find(it => it.period === data.src);
           if (!slot) return;
           slot.period = target;
@@ -725,9 +726,8 @@ function openPaymentForm(period, key) {
       const newPeriod = (showDate && f.get('period')) || period;
       if (isVirtual) {
         if (inst?.plan) {
-          if (newPeriod !== period && inst.plan.some(it => it.period === newPeriod)) {
-            alert('У рассрочки уже есть платёж на эту дату.'); return;
-          }
+          // Дата, уже занятая этой же рассрочкой, — не ошибка: слоты одной даты
+          // движок складывает в один платёж.
           const slot = inst.plan.find(it => it.period === period);
           if (slot) {
             const d = diffFields({ period, amount: slot.amount }, { period: newPeriod, amount }, ['period', 'amount']);

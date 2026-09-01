@@ -110,13 +110,15 @@ export function buildTimeline(state, endISO) {
       const hasRec = recs.some(r => r.installmentId === inst.id);
       if (inst.plan) {
         if (hasRec) continue; // запись этого периода уже отрисована (или обнулена)
-        const item = inst.plan.find(it => it.period === p);
-        if (!item || !item.amount) continue;
+        // Слотов на одну дату может быть НЕСКОЛЬКО (перенесли платёж на занятую
+        // дату) — складываем их в один платёж, а не берём первый попавшийся.
+        const planned = inst.plan.reduce((s, it) => it.period === p ? s + it.amount : s, 0);
+        if (!planned) continue;
         // не проектируем платежи дальше реального остатка: если долг уже покрыт
         // записями (досрочно закрыли) — будущие слоты плана не «фоним».
         const room = inst.total - st.scheduled - st.planVirt;
         if (room <= 0) continue;
-        const amount = Math.min(item.amount, room);
+        const amount = Math.min(planned, room);
         st.planVirt += amount;
         payments.push({
           id: `virt-${inst.id}-${p}`, name: inst.name, amount,

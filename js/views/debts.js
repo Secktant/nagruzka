@@ -104,15 +104,16 @@ function openDebtForm(instId) {
   // ближайший будущий период (>= сегодня): авто-платежи ставим только сюда и дальше,
   // чтобы не назначить на уже прошедшую дату (напр. сегодня 16-е, а период 15-е — вчера)
   const firstFuture = allPeriods.find(p => p >= today) || allPeriods[0];
-  // used — даты, занятые другими строками: их в выпадашке делаем недоступными (без дублей)
-  const periodOptions = (sel, used) => {
+  // Занятые даты НЕ блокируем: два платежа на одну дату — законный случай
+  // (перенесли платёж на дату, где уже есть другой). Движок складывает их в один.
+  const periodOptions = (sel) => {
     // прошлые периоды не предлагаем; но текущую дату строки оставляем (вдруг платёж просрочен).
     // позже даты окончания тоже не предлагаем (рассрочка имеет срок).
     const end = endVal();
     const base = allPeriods.filter(p => (p >= today && (!end || p <= end)) || p === sel);
     const list = (sel && !base.includes(sel)) ? [sel, ...base].sort() : base;
     return list
-      .map(p => `<option value="${p}" ${p === sel ? 'selected' : ''} ${used && used.has(p) && p !== sel ? 'disabled' : ''}>${fmtPeriodFull(p)}</option>`).join('');
+      .map(p => `<option value="${p}" ${p === sel ? 'selected' : ''}>${fmtPeriodFull(p)}</option>`).join('');
   };
 
   // Существующая рассрочка: все её платежи (записи + хвост) с нагрузкой периода.
@@ -233,13 +234,12 @@ function openDebtForm(instId) {
   function renderPayRows() {
     const box = $('#debt-pays');
     if (!box) return;
-    const used = new Set(draftRows.map(r => r.period));
     box.innerHTML = draftRows.map((r, i) => `
       <div class="debt-pay-row ${r.amount === 0 ? 'skipped' : ''}" data-dpi="${i}">
         <span class="dp-status ${r.paid ? 'ok' : ''}">${r.paid ? '✓' : 'план'}</span>
         ${r.paid
           ? `<span class="dp-period">${fmtPeriodFull(r.period)}</span>`
-          : `<select data-row-period title="Перенести на другую дату">${periodOptions(r.period, used)}</select>`}
+          : `<select data-row-period title="Перенести на другую дату">${periodOptions(r.period)}</select>`}
         <span class="dp-load" data-row-load></span>
         ${moneyInput('', r.amount, `data-row-amount aria-label="Сумма платежа" ${r.paid ? 'disabled' : ''}`)}
         ${r.paid ? '<span></span>' : `<button type="button" class="icon-btn danger" data-row-del title="Удалить платёж">×</button>`}
@@ -258,14 +258,12 @@ function openDebtForm(instId) {
 
     const pays = $('#debt-pays');
     if (pays) {
-      // смена даты платежа: проверяем уникальность, пересортируем, перерисовываем
+      // смена даты платежа: пересортировать и перерисовать (дубли дат разрешены)
       pays.addEventListener('change', e => {
         const row = e.target.closest('.debt-pay-row'); if (!row) return;
         const i = Number(row.dataset.dpi);
         if (e.target.matches('[data-row-period]')) {
-          const v = e.target.value;
-          if (draftRows.some((r, j) => j !== i && r.period === v)) { renderPayRows(); return; } // дубль — откат
-          draftRows[i].period = v;
+          draftRows[i].period = e.target.value;
           draftRows.sort(byPeriod);
           renderPayRows();
         }
@@ -453,10 +451,9 @@ function openDebtForm(instId) {
   function renderSchedule() {
     const list = $('#sched-list');
     if (!list) return;
-    const used = new Set(schedule.map(s => s.period));
     list.innerHTML = schedule.map((row, i) => `
       <div class="sched-row" data-si="${i}">
-        <select data-sched-period>${periodOptions(row.period, used)}</select>
+        <select data-sched-period>${periodOptions(row.period)}</select>
         ${moneyInput('', row.amount, 'data-sched-amount')}
         <span class="sched-load" data-sched-load></span>
         <button type="button" class="icon-btn danger" data-sched-del title="Убрать платёж">×</button>
@@ -495,9 +492,7 @@ function openDebtForm(instId) {
     list.addEventListener('change', e => {
       const row = e.target.closest('.sched-row'); if (!row) return;
       const i = Number(row.dataset.si);
-      // даты уникальны: дубль выбрать нельзя (опции disabled), но на всякий — защита
       if (e.target.matches('[data-sched-period]')) {
-        if (schedule.some((s, j) => j !== i && s.period === e.target.value)) { renderSchedule(); return; }
         schedule[i].period = e.target.value;
         dropNote();
         renderSchedule();
@@ -655,8 +650,6 @@ function openDebtForm(instId) {
     if (isNew) {
       const plan = schedule.filter(it => it.amount > 0).sort((a, b) => a.period < b.period ? -1 : 1);
       if (!plan.length) { alert('Добавьте хотя бы один платёж в расписание.'); return; }
-      const dates = plan.map(p => p.period);
-      if (new Set(dates).size !== dates.length) { alert('В расписании повторяются даты — сделайте их уникальными.'); return; }
       const planSum = plan.reduce((s, x) => s + x.amount, 0);
       const total = parseMoney(form.total.value) || planSum;  // общая сумма = введённая
       if (planSum < total - 0.5) {
@@ -673,10 +666,8 @@ function openDebtForm(instId) {
       logChange('installment', 'create', rec, { now: { total, count: plan.length } });
       await putInstallment(S.db, rec);
     } else {
-      // применяем черновик: даты уникальны, неоплаченный хвост пересобираем как plan,
+      // применяем черновик: неоплаченный хвост пересобираем как plan,
       // оплаченные записи не трогаем (они в S.state.records и в plan не попадают)
-      const periods = draftRows.map(r => r.period);
-      if (new Set(periods).size !== periods.length) { alert('У платежей повторяются даты — сделайте их уникальными.'); return; }
       const total = parseMoney(form.total.value) || inst.total;
       const plan = draftRows.filter(r => !r.paid && r.amount > 0)
         .map(r => ({ period: r.period, amount: r.amount }))
