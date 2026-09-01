@@ -301,6 +301,22 @@ describe('buildTimeline — рассрочка по явному плану', ()
     assert.equal(tl.get('2026-02-28').payments.length, 0);
   });
 
+  test('два слота плана на одну дату складываются в один платёж', () => {
+    const s2 = structuredClone(s);
+    // перенесли февральский платёж на 31 января, где слот уже был
+    s2.installments[0].plan = [
+      { period: '2026-01-15', amount: 10000 },
+      { period: '2026-01-31', amount: 10000 },
+      { period: '2026-01-31', amount: 10000 },
+    ];
+    const tl2 = buildTimeline(s2, '2026-02-28');
+    const day = tl2.get('2026-01-31');
+    assert.equal(day.payments.length, 1, 'одна строка, а не две');
+    assert.equal(day.payments[0].amount, 20000);
+    assert.equal(day.totalExpense, 20000);
+    assert.equal(tl2.get('2026-02-15').payments.length, 0, 'февраль освободился');
+  });
+
   test('план не «фонит» дальше реального остатка (досрочное закрытие)', () => {
     const s2 = structuredClone(s);
     // закрыли досрочно записью на всю сумму 15-го
