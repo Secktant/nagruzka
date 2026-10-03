@@ -78,7 +78,7 @@ export async function renderSettings() {
         <button class="btn" id="kf-paste" ${kfLock}>Вставить текстом</button>
         <input type="file" id="kf-file" hidden>
       </div>
-      ${kfBound ? `<p class="hint">keyfile на этом устройстве не меняется, пока данные зашифрованы: ключ выведен из пароля и ${kf ? 'этого keyfile' : 'того, что keyfile нет'}.</p>` : ''}
+      ${kfBound ? `<p class="hint">keyfile на этом устройстве не меняется, пока данные зашифрованы: ключ выведен ${kf ? 'из пароля и этого keyfile' : 'только из пароля, без keyfile'}.</p>` : ''}
       <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
         <button class="btn primary" id="enc-export-btn">${icon('lock')} Зашифровать и сохранить</button>
         <button class="btn" id="enc-import-btn">${icon('unlock')} Загрузить зашифрованную</button>
