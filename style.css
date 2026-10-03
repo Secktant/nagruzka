@@ -726,6 +726,9 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   margin-top: 16px;
 }
 .spacer { flex: 1; }
+/* Ряд keyfile: до пяти кнопок — переносим целыми кнопками, а не подписи внутри них. */
+.kf-actions { flex-wrap: wrap; }
+.kf-actions .btn { white-space: nowrap; }
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 4px;
   background: var(--surface-2);

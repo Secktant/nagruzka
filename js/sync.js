@@ -1,6 +1,6 @@
 // Синхронизация через Supabase (этап 4b), zero-knowledge.
 // Сервер хранит ТОЛЬКО шифротекст: id (локатор), salt (для Argon2, не секрет), blob (iv+ct).
-// Расшифровать может лишь тот, у кого пароль + keyfile. Доступ к таблице — только через
+// Расшифровать может лишь тот, у кого пароль (+ keyfile, если синк настроен с ним). Доступ к таблице — только через
 // RPC sync_pull/sync_push (перечислить чужие блобы нельзя). См. supabase-setup.sql.
 
 import { SUPABASE_URL, SUPABASE_ANON } from './sync-config.js';
