@@ -12,6 +12,7 @@ import {
   isMidPeriod,
   loadZone,
   buildTimeline,
+  freezeRegular,
   installmentSummaries,
   groupThousands,
   fmtMoney,
@@ -672,5 +673,116 @@ describe('regularShares — доля регулярных в месячном д
     const r = regularShares([reg('a', 100000, 'both')], 70000);
     assert.equal(r.pct, 142.9);
     assert.equal(loadZone(r.pct / 100).key, 'over');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('freezeRegular — правка регулярного не переписывает прошлое', () => {
+  const TODAY = '2026-03-10';   // прошлое: январь и февраль; 15.03 и дальше — будущее
+  const base = () => ({
+    settings: { banks: [], startPeriod: '2026-01-15' },
+    regulars: [
+      { id: 'net', name: 'Интернет', kind: 'expense', amount: 1000, schedule: 'mid', bank: 'Тбанк', active: true },
+      { id: 'sal', name: 'Зарплата', kind: 'income', amount: 70000, schedule: 'both', bank: null, active: true },
+    ],
+    installments: [],
+    // январский интернет отмечен (уже запись), в 31.01 доход правили руками
+    records: [
+      { id: 'r1', period: '2026-01-15', kind: 'expense', name: 'Интернет', amount: 1000, regularId: 'net', paid: true },
+      { id: 'i1', period: '2026-01-31', kind: 'income', name: 'Премия', amount: 90000, paid: false },
+    ],
+  });
+  // правка «как во вкладке Деньги»: сначала заморозка, потом новая сумма
+  const edit = (s, id, amount) => {
+    const reg = s.regulars.find(r => r.id === id);
+    const { records, since } = freezeRegular(s, reg, TODAY);
+    s.records.push(...records);
+    reg.since = since;
+    reg.amount = amount;
+    return buildTimeline(s, '2026-04-30');
+  };
+  const netOf = (tl, p) => tl.get(p).payments.find(x => x.regularId === 'net')?.amount;
+
+  test('расход: прошлое со старой суммой, будущее с новой', () => {
+    const tl = edit(base(), 'net', 1500);
+    assert.equal(netOf(tl, '2026-01-15'), 1000, 'отмеченный — как был');
+    assert.equal(netOf(tl, '2026-02-15'), 1000, 'неотмеченный прошлый заморожен');
+    assert.equal(netOf(tl, '2026-03-15'), 1500, 'ближайший будущий — новая сумма');
+    assert.equal(netOf(tl, '2026-04-15'), 1500);
+  });
+
+  test('замороженный прошлый платёж остаётся неоплаченным (просрочка не пропадает)', () => {
+    const s = base();
+    const frozen = freezeRegular(s, s.regulars[0], TODAY).records;
+    assert.deepEqual(frozen.map(r => r.period), ['2026-02-15'], 'январь уже запись — не дублируем');
+    assert.equal(frozen[0].paid, false);
+    assert.equal(frozen[0].bank, 'Тбанк');
+  });
+
+  test('зарплата: доход прошлых периодов не сдвигается, ручной доход не трогаем', () => {
+    const tl = edit(base(), 'sal', 80000);
+    assert.equal(tl.get('2026-01-15').income, 70000);
+    assert.equal(tl.get('2026-01-31').income, 90000, 'период с ручным доходом — без зарплаты, как и было');
+    assert.equal(tl.get('2026-02-28').income, 70000);
+    assert.equal(tl.get('2026-03-15').income, 80000);
+  });
+
+  test('выключение: прошлое остаётся, будущее пустеет', () => {
+    const s = base();
+    const reg = s.regulars[0];
+    const f = freezeRegular(s, reg, TODAY);
+    s.records.push(...f.records);
+    reg.since = f.since;
+    reg.active = false;
+    const tl = buildTimeline(s, '2026-04-30');
+    assert.equal(netOf(tl, '2026-02-15'), 1000);
+    assert.equal(netOf(tl, '2026-03-15'), undefined);
+  });
+
+  test('повторная заморозка ничего не дублирует', () => {
+    const s = base();
+    s.records.push(...freezeRegular(s, s.regulars[0], TODAY).records);
+    assert.equal(freezeRegular(s, s.regulars[0], TODAY).records.length, 0);
+  });
+
+  test('смена расписания не дорисовывает прошлое', () => {
+    const s = base();
+    const reg = s.regulars[0];
+    const f = freezeRegular(s, reg, TODAY);
+    s.records.push(...f.records);
+    reg.since = f.since;
+    reg.schedule = 'both';                        // было «15-е», стало «каждый период»
+    const tl = buildTimeline(s, '2026-04-30');
+    assert.equal(netOf(tl, '2026-02-28'), undefined, 'в прошлый конец месяца не появился');
+    assert.equal(netOf(tl, '2026-03-31'), 1000, 'в будущий — появился');
+  });
+
+  test('повторное включение не дорисовывает месяцы, когда был выключен', () => {
+    const s = base();
+    const reg = s.regulars[0];
+    reg.active = false;                           // выключен давно, прошлое пустое
+    const f = freezeRegular(s, reg, TODAY);
+    reg.since = f.since;
+    reg.active = true;
+    const tl = buildTimeline(s, '2026-04-30');
+    assert.equal(netOf(tl, '2026-02-15'), undefined);
+    assert.equal(netOf(tl, '2026-03-15'), 1000);
+  });
+
+  test('сумма 0 = не настроено: не замораживаем, первый ввод заполняет прошлое', () => {
+    const s = base();
+    const sal = s.regulars[1];
+    sal.amount = 0;
+    const f = freezeRegular(s, sal, TODAY);
+    assert.deepEqual(f, { records: [], since: null });
+    sal.amount = 70000;
+    assert.equal(buildTimeline(s, '2026-04-30').get('2026-02-15').income, 70000);
+  });
+
+  test('since — ближайший период не раньше today', () => {
+    const s = base();
+    assert.equal(freezeRegular(s, s.regulars[0], '2026-03-10').since, '2026-03-15');
+    assert.equal(freezeRegular(s, s.regulars[0], '2026-03-15').since, '2026-03-15');
+    assert.equal(freezeRegular(s, s.regulars[0], '2026-03-16').since, '2026-03-31');
   });
 });

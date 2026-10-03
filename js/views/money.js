@@ -8,7 +8,7 @@ import { S, putRegular, deleteRegular, putSettings, logChange, diffFields } from
 import { render } from '../render.js';
 import { $, $$, esc, uid, parseMoney, moneyInput, openModal, closeModal } from '../dom.js';
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
-import { generatePeriods, fmtMoney, loadZone, regularShares } from '../engine.js';
+import { generatePeriods, fmtMoney, loadZone, regularShares, freezeRegular } from '../engine.js';
 import { todayISO, horizonEnd } from '../format.js';
 
 // Синхронный (в отличие от renderSettings): ничего из IndexedDB ждать не нужно.
@@ -100,6 +100,7 @@ export function renderMoney() {
 
   salarySave.onclick = async () => {
     if (!salary || !dirty()) return;
+    freezePast(salary);
     salary.amount = typed();
     logChange('settings', 'edit', salary, { was: { amount: salaryWas }, now: { amount: salary.amount } });
     await putRegular(S.db, salary);
@@ -128,6 +129,17 @@ export function renderMoney() {
       render();
     }
   });
+}
+
+// Прошлое регулярного фиксируем ДО правки/выключения/удаления: иначе движок пересчитает
+// прошлые периоды по новым значениям (см. freezeRegular в engine.js). Записи — техника,
+// а не намерение пользователя, поэтому в историю изменений они не пишутся.
+function freezePast(reg) {
+  const { records, since } = freezeRegular(S.state, reg, todayISO());
+  if (since) reg.since = since;
+  if (!records.length) return;
+  S.state.records.push(...records);
+  S.state.records.sort((a, b) => a.period < b.period ? -1 : 1);
 }
 
 function openRegularForm(regId) {
@@ -172,6 +184,7 @@ function openRegularForm(regId) {
   const delBtn = $('#reg-delete');
   if (delBtn) delBtn.onclick = async () => {
     if (!confirm(`Удалить «${reg.name}»? История останется, будущие периоды очистятся.`)) return;
+    freezePast(reg);
     logChange('regular', 'delete', reg);
     S.state.regulars = S.state.regulars.filter(r => r.id !== reg.id);
     await deleteRegular(S.db, reg.id);
@@ -200,8 +213,9 @@ function openRegularForm(regId) {
     } else {
       // Вкл/выкл — отдельное событие, а не правка поля: в ленте это разные строки
       // («выключен Каршеринг» читается, «active: true → false» нет).
-      if (reg.active !== data.active) logChange('regular', data.active ? 'on' : 'off', reg);
       const d = diffFields(reg, data, ['name', 'amount', 'schedule', 'bank']);
+      if (d || reg.active !== data.active) freezePast(reg);
+      if (reg.active !== data.active) logChange('regular', data.active ? 'on' : 'off', reg);
       Object.assign(reg, data);
       if (d) logChange('regular', 'edit', reg, d);
       await putRegular(S.db, reg);
