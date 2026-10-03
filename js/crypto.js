@@ -30,6 +30,18 @@ export const b64 = {
   dec: (str) => Uint8Array.from(atob(str), c => c.charCodeAt(0)),
 };
 
+// keyfile текстом (вставка из менеджера паролей) → 32 байта или null.
+// Терпит переносы и пробелы, base64url и отсутствие «=» в конце: заметки в
+// менеджерах паролей и мессенджеры любят переносить и обрезать такие строки.
+export function parseKeyfileText(str) {
+  const clean = String(str || '').replace(/\s+/g, '').replace(/-/g, '+').replace(/_/g, '/').replace(/=+$/, '');
+  if (!/^[A-Za-z0-9+/]+$/.test(clean)) return null;
+  try {
+    const bytes = b64.dec(clean + '='.repeat((4 - clean.length % 4) % 4));
+    return bytes.length === 32 ? bytes : null;
+  } catch { return null; }
+}
+
 // 32 случайных байта для keyfile.
 export function generateKeyfile() {
   return crypto.getRandomValues(new Uint8Array(32));

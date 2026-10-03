@@ -20,6 +20,8 @@ import {
   sealGCM,
   openGCM,
   generateKeyfile,
+  parseKeyfileText,
+  b64,
 } from '../js/crypto.js';
 
 // Поднять Argon2 в globalThis.hashwasm до первого вызова деривации.
@@ -132,5 +134,37 @@ describe('encryptText / decryptToText — полный файловый цикл
     const file = await encryptText(plain, 'пароль', kf);
     assert.equal(await decryptToText(file, 'пароль', kf), plain);
     await assert.rejects(() => decryptToText(file, 'пароль', null), /Не удалось расшифровать/);
+  });
+});
+
+describe('parseKeyfileText — keyfile текстом из менеджера паролей', () => {
+  const kf = generateKeyfile();
+  const text = b64.enc(kf);            // ровно то, что выдаёт кнопка «Скопировать текстом»
+
+  test('обычный base64 из 44 символов → те же 32 байта', () => {
+    assert.equal(text.length, 44);
+    assert.deepEqual(parseKeyfileText(text), kf);
+  });
+  test('переносы, пробелы, обрезанные «=» и base64url не мешают', () => {
+    const messy = '  ' + text.slice(0, 20) + '\n ' + text.slice(20).replace(/=+$/, '') + '\n';
+    assert.deepEqual(parseKeyfileText(messy), kf);
+    const url = text.replace(/\+/g, '-').replace(/\//g, '_');
+    assert.deepEqual(parseKeyfileText(url), kf);
+  });
+  test('чужое отвергается: не та длина, мусор, пусто', () => {
+    assert.equal(parseKeyfileText(b64.enc(new Uint8Array(16))), null);
+    assert.equal(parseKeyfileText('это не keyfile!'), null);
+    assert.equal(parseKeyfileText(''), null);
+    assert.equal(parseKeyfileText(undefined), null);
+  });
+});
+
+describe('синк без keyfile: бэкап из GitHub всё равно помечен «с keyfile»', () => {
+  test('файл с пометкой keyfile, зашифрованный без него, открывается паролем', async () => {
+    const plain = '{"app":"nagruzka"}';
+    const file = await encryptText(plain, 'длинная фраза из слов', null);
+    file[6] |= 0x01;                       // так собирает .nz бэкап-Action: флаг ставится всегда
+    assert.equal(inspect(file).needsKeyfile, true);
+    assert.equal(await decryptToText(file, 'длинная фраза из слов', null), plain);
   });
 });

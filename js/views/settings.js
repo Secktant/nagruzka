@@ -10,7 +10,7 @@ import { render } from '../render.js';
 import { $, esc, parseMoney, withBusy } from '../dom.js';
 import { icon } from '../icons.js';
 import { todayISO } from '../format.js';
-import { generateKeyfile, encryptText, encryptTextWithKey, decryptToText, inspect } from '../crypto.js';
+import { generateKeyfile, parseKeyfileText, b64, encryptText, encryptTextWithKey, decryptToText, inspect } from '../crypto.js';
 import { isConfigured as syncConfigured, generateSyncId, isValidSyncId, deriveChunkId, CHUNK_NAGRUZKA, AAD_MAIN } from '../sync.js';
 import { createSyncEngine, updateSyncStatusUI, openLockSetup } from '../sync-ui.js';
 import {
@@ -51,6 +51,13 @@ export async function renderSettings() {
            ${S.vaultKey ? '<p class="hint">Один раз подтвердишь пароль → дальше вход по Face/Touch ID (пароль — запасной).</p>' : '<p class="hint">Сначала включи синхронизацию — замок использует тот же ключ.</p>'}`}
     </section>` : '';
 
+  // Ключ данных = Argon2id(пароль ⊕ keyfile ЭТОГО устройства). Пока данные зашифрованы
+  // (сейф или замок), подмена keyfile молча ломает следующий ввод пароля: ключ выйдет
+  // другим и сейф не откроется. Поэтому менять keyfile можно только без ключа;
+  // скачать и скопировать — всегда.
+  const kfBound = !!(S.vaultKey || lock);
+  const kfLock = kfBound ? 'disabled' : '';
+
   $('#view-settings').innerHTML = `
     <div class="section-head"><h2>Настройки</h2></div>
 
@@ -61,14 +68,17 @@ export async function renderSettings() {
           ? 'keyfile активен — второй фактор включён'
           : 'keyfile не задан — копия защищена только паролем'}
       </div>
-      <div class="form-actions" style="justify-content:flex-start;margin-top:8px">
+      <div class="form-actions kf-actions" style="justify-content:flex-start;margin-top:8px">
         ${kf
           ? `<button class="btn" id="kf-download">${icon('download')} Скачать keyfile</button>
-             <button class="btn danger" id="kf-clear">Удалить keyfile</button>`
-          : `<button class="btn" id="kf-create">Создать keyfile</button>`}
-        <button class="btn" id="kf-load">${icon('upload')} Загрузить keyfile</button>
+             <button class="btn" id="kf-copy">Скопировать текстом</button>
+             <button class="btn danger" id="kf-clear" ${kfLock}>Удалить keyfile</button>`
+          : `<button class="btn" id="kf-create" ${kfLock}>Создать keyfile</button>`}
+        <button class="btn" id="kf-load" ${kfLock}>${icon('upload')} Загрузить keyfile</button>
+        <button class="btn" id="kf-paste" ${kfLock}>Вставить текстом</button>
         <input type="file" id="kf-file" hidden>
       </div>
+      ${kfBound ? `<p class="hint">keyfile на этом устройстве не меняется, пока данные зашифрованы: ключ выведен ${kf ? 'из пароля и этого keyfile' : 'только из пароля, без keyfile'}.</p>` : ''}
       <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
         <button class="btn primary" id="enc-export-btn">${icon('lock')} Зашифровать и сохранить</button>
         <button class="btn" id="enc-import-btn">${icon('unlock')} Загрузить зашифрованную</button>
@@ -99,11 +109,11 @@ export async function renderSettings() {
         ${(S.syncStatus === 'synced' || S.syncStatus === 'syncing')
           ? `<button class="btn" id="sync-off">Выключить синхронизацию</button>
              <button class="btn" id="sync-pass">Сменить пароль</button>`
-          : `<button class="btn primary" id="sync-on" ${(!sid || !kf) ? 'disabled' : ''}>${icon('reg')} Включить синхронизацию</button>`}
+          : `<button class="btn primary" id="sync-on" ${!sid ? 'disabled' : ''}>${icon('reg')} Включить синхронизацию</button>`}
       </div>
       ${(!sid || !kf) ? `<p class="hint">
         ${!sid ? 'Создай Sync ID на одном устройстве, «Скопировать» → на втором «Вставить» тот же. ' : ''}
-        ${!kf ? '<b>Нужен keyfile</b> (выше) — без него синк не расшифровать.' : ''}
+        ${!kf ? 'Без keyfile данные защищает только пароль — нужна длинная фраза из 5–6 случайных слов. Если синк уже настроен на другом устройстве с keyfile, сначала загрузи его сюда.' : ''}
       </p>` : ''}
     </section>` : ''}
     ${lockCard}`;
@@ -137,6 +147,27 @@ export async function renderSettings() {
     render();
   };
   if ($('#kf-download')) $('#kf-download').onclick = () => downloadBytes(kf, 'nagruzka.key');
+  // keyfile текстом — 44 символа для заметки в менеджере паролей. Тот же формат, что
+  // даёт `base64 -i nagruzka.key` в терминале, так что старые заметки тоже подходят.
+  if ($('#kf-copy')) $('#kf-copy').onclick = async () => {
+    const text = b64.enc(kf);
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('keyfile скопирован текстом ✓\n\nВставь его в менеджер паролей рядом с паролем. На новом устройстве — «Вставить текстом».');
+    } catch {
+      prompt('Скопируй keyfile (выдели и скопируй):', text);   // поле prompt можно выделить
+    }
+  };
+  if ($('#kf-paste')) $('#kf-paste').onclick = async () => {
+    const txt = prompt('Вставь keyfile текстом (44 символа из менеджера паролей):');
+    if (!txt) return;
+    const bytes = parseKeyfileText(txt);
+    if (!bytes) { alert('Это не похоже на keyfile «Нагрузки»: ожидается 44 символа base64.'); return; }
+    await setKeyfile(S.db, bytes);
+    S.currentKeyfile = bytes;
+    alert('keyfile загружен ✓');
+    render();
+  };
   if ($('#kf-clear')) $('#kf-clear').onclick = async () => {
     if (!confirm('Удалить keyfile с этого устройства? Зашифрованные с ним копии перестанут открываться здесь, пока не загрузите keyfile снова.')) return;
     await clearKeyfile(S.db);
@@ -168,7 +199,7 @@ export async function renderSettings() {
     try {
       let bytes;
       if (S.syncEngine?.key && S.syncEngine?.salt) {
-        // один пароль: файл шифруется ключом синхронизации (keyfile для синка обязателен),
+        // один пароль: файл шифруется ключом синхронизации (с keyfile, если он задан),
         // открывается тем же паролем приложения — отдельный пароль для файла не нужен.
         bytes = await encryptTextWithKey(exportState(S.state), S.syncEngine.key, S.syncEngine.salt, !!kf);
       } else {
@@ -193,26 +224,32 @@ export async function renderSettings() {
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const meta = inspect(bytes); // проверка сигнатуры + нужен ли keyfile
-      if (meta.needsKeyfile && !kf) {
-        alert('Этот файл зашифрован с keyfile, а на устройстве его нет. Сначала загрузите keyfile.');
-        return;
-      }
       const pass = prompt('Пароль от копии (обычно — пароль синхронизации):');
       if (!pass) return;
-      const useKf = meta.needsKeyfile ? kf : null;
+      // Пометка «с keyfile» в файле — не гарантия: бэкап из GitHub ставит её всегда, даже
+      // если синк настроен без keyfile. Поэтому без keyfile на устройстве пробуем паролем,
+      // а с keyfile — сначала с ним, потом без.
+      // ponytail: каждая попытка заново считает Argon2 (~1 с); неверный пароль при keyfile
+      // на устройстве = до 6 попыток. Ускорять (один вывод ключа на вариант) — если начнёт мешать.
+      const kfVariants = meta.needsKeyfile && kf ? [kf, null] : [null];
       // Три формата файла, пробуем по очереди: свежий бэкап чанка (AAD = метка),
       // старый бэкап (AAD = id чанка, требует Sync ID на устройстве) и ручной
       // экспорт (без AAD). Неверный пароль провалит все три → корректная ошибка.
       const oldAad = sid ? await deriveChunkId(sid, CHUNK_NAGRUZKA) : null;
       const variants = [AAD_MAIN, oldAad, undefined].filter((v, i) => i !== 1 || v);
       let json = null, lastErr = null;
-      for (const aad of variants) {
-        try { json = await decryptToText(bytes, pass, useKf, aad); break; }
-        catch (err) { lastErr = err; }
+      outer: for (const useKf of kfVariants) {
+        for (const aad of variants) {
+          try { json = await decryptToText(bytes, pass, useKf, aad); break outer; }
+          catch (err) { lastErr = err; }
+        }
       }
       if (json === null) {
         // Без Sync ID старый бэкап не открыть в принципе — а сообщение про пароль
         // отправляет человека перебирать пароли. Говорим, чего именно не хватает.
+        if (meta.needsKeyfile && !kf) {
+          throw new Error('Не удалось расшифровать паролем. Если копия сделана с keyfile — загрузите keyfile (файлом или текстом) и повторите.');
+        }
         throw new Error(sid ? lastErr.message
           : 'Не удалось расшифровать. Если это бэкап из синхронизации, сделанный до 1.8.3, '
             + 'он привязан к Sync ID — вставьте Sync ID в настройках синхронизации и повторите. '
@@ -278,6 +315,10 @@ export async function renderSettings() {
 
     if ($('#sync-on')) $('#sync-on').onclick = async (e) => {
       const btn = e.currentTarget;
+      if (!kf && !confirm('Включить синхронизацию без keyfile?\n\n'
+        + 'Тогда копии на сервере и в бэкапе защищает только пароль: короткий можно подобрать по утёкшей копии. '
+        + 'Используй длинную фразу из 5–6 случайных слов.\n\n'
+        + 'Если синк уже настроен на другом устройстве с keyfile — нажми «Отмена» и сначала загрузи keyfile.')) return;
       const pass = prompt('Пароль синхронизации (запомнится на этом устройстве; сам пароль не хранится):');
       if (!pass) return;
       try {
