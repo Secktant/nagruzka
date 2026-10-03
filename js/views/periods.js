@@ -613,7 +613,7 @@ function openPaymentForm(period, key) {
   <form id="pay-form" class="form">
     <h3>${isNew ? 'Новый платёж' : 'Платёж'} · ${fmtPeriodFull(period)}</h3>
     ${isVirtual && !isInst ? `<p class="hint">Это регулярный платёж — правка коснётся только этого периода.</p>` : ''}
-    ${isInst ? `<p class="hint">Платёж по рассрочке. Дату можно поменять (например, оплатил раньше срока).</p>` : ''}
+    ${isInst ? `<p class="hint">Платёж по рассрочке. Дату можно поменять (например, оплатил раньше срока).${isVirtual ? ' Банк меняется у всей рассрочки.' : ''}</p>` : ''}
     <label>Название
       <input name="name" required autocomplete="off" list="name-suggest"
         value="${esc(p?.name || '')}" ${p?.installmentId ? 'readonly' : ''}>
@@ -724,8 +724,15 @@ function openPaymentForm(period, key) {
       // платёж рассрочки: дата меняет либо слот плана (виртуальный), либо период записи (реальный)
       const inst = S.state.installments.find(i => i.id === p.installmentId);
       const newPeriod = (showDate && f.get('period')) || period;
-      if (isVirtual) {
-        if (inst?.plan) {
+      if (isVirtual && inst) {
+        // Банк — свойство РАССРОЧКИ, как и название (оно здесь readonly): слот плана
+        // хранит только дату и сумму, а виртуальный платёж берёт банк из inst.bank.
+        // Раньше выбор банка в этой ветке молча выбрасывался.
+        if ((inst.bank || null) !== bank) {
+          logChange('installment', 'edit', inst, { was: { bank: inst.bank || null }, now: { bank } });
+          inst.bank = bank;
+        }
+        if (inst.plan) {
           // Дата, уже занятая этой же рассрочкой, — не ошибка: слоты одной даты
           // движок складывает в один платёж.
           const slot = inst.plan.find(it => it.period === period);
@@ -735,9 +742,9 @@ function openPaymentForm(period, key) {
             inst.plan.sort((a, b) => a.period < b.period ? -1 : 1);
             if (d) logChange('installment', 'edit', inst, d);
           }
-          await putInstallment(S.db, inst);
         }
-      } else {
+        await putInstallment(S.db, inst);
+      } else if (!isVirtual) {
         const rec = S.state.records.find(r => r.id === p.id);
         const d = diffFields(rec, { amount, bank, period: newPeriod }, ['amount', 'bank', 'period']);
         rec.amount = amount; rec.bank = bank;
