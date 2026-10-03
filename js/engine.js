@@ -43,6 +43,48 @@ export function loadZone(load) {
 //   income, payments[], totalExpense, load, zone, leftover, carry, perBank
 // }
 // payment: { id, name, amount, bank, paid, virtual, regularId?, installmentId?, instProgress? }
+// Попадает ли регулярный в период по расписанию (записи периода не учитываются).
+// Одно правило на двоих: buildTimeline и freezeRegular обязаны видеть одно и то же.
+function regularFits(reg, p) {
+  if (!reg.active) return false;
+  if (reg.since && p < reg.since) return false; // новый регулярный — только с этой даты вперёд
+  return reg.schedule === 'both' ||
+    (reg.schedule === 'mid' && isMidPeriod(p)) ||
+    (reg.schedule === 'end' && !isMidPeriod(p));
+}
+
+// Заморозка прошлого регулярного — звать ПЕРЕД его правкой, выключением или удалением.
+// Прошлые вхождения, которые ещё виртуальные (не отмечены, не правлены, не скрыты),
+// движок считает по ТЕКУЩЕЙ сумме регулярного — и правка переписала бы историю задним
+// числом. Здесь они превращаются в записи с ещё старыми значениями. Прошлое = периоды
+// строго раньше today; today и дальше получают новые значения.
+// Доход: зарплата в периоде виртуальна, только если там нет НИ ОДНОЙ записи дохода
+// (то же правило, что hasIncomeRecord в buildTimeline).
+//
+// since — с какого периода регулярный начисляется после правки. Без сдвига прошлое
+// всё равно поменялось бы: смена расписания (15-е → каждый период) или повторное
+// включение дорисовали бы платежи в прошлые даты, где записей нет.
+//
+// Сумма 0 = «не настроено» (зарплата на свежей установке): замораживать нечего, и
+// первый ввод суммы, как и раньше, заполняет прошлое. since = null — не сдвигать.
+export function freezeRegular(state, reg, today) {
+  if (!reg.amount) return { records: [], since: null };
+  const records = [];
+  for (const p of generatePeriods(state.settings.startPeriod, today)) {
+    if (p >= today || !regularFits(reg, p)) continue;
+    const recs = state.records.filter(r => r.period === p);
+    if (recs.some(r => r.regularId === reg.id)) continue;
+    if (reg.kind === 'income' && recs.some(r => r.kind === 'income')) continue;
+    records.push({
+      id: `frz-${reg.id}-${p}`, period: p, kind: reg.kind, name: reg.name,
+      amount: reg.amount, bank: reg.bank ?? null, paid: false, regularId: reg.id,
+    });
+  }
+  const [y, m] = today.split('-').map(Number);
+  const mid = iso(y, m, 15);
+  return { records, since: today <= mid ? mid : iso(y, m, eom(y, m)) };
+}
+
 export function buildTimeline(state, endISO) {
   const { settings, regulars, installments, records } = state;
   const periods = generatePeriods(settings.startPeriod, endISO);
@@ -86,12 +128,7 @@ export function buildTimeline(state, endISO) {
 
     // Регулярные: виртуальный платёж, если в периоде нет записи с этим regularId.
     for (const reg of regulars) {
-      if (!reg.active) continue;
-      if (reg.since && p < reg.since) continue; // новый регулярный — только с этой даты вперёд
-      const fits = reg.schedule === 'both' ||
-        (reg.schedule === 'mid' && isMidPeriod(p)) ||
-        (reg.schedule === 'end' && !isMidPeriod(p));
-      if (!fits) continue;
+      if (!regularFits(reg, p)) continue;
       const exists = recs.some(r => r.regularId === reg.id);
       if (exists) continue;
       if (reg.kind === 'income') {
