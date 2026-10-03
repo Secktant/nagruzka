@@ -546,6 +546,45 @@ body {
 }
 .dc-body { margin-top: 6px; }
 
+/* Разовые платежи (п.17): карточка-<details>, внутри год → месяц → строки.
+   Только обзор — без галок; тап по строке открывает модалку платежа. */
+.oneoff { margin-bottom: 12px; }
+.oneoff summary { list-style: none; cursor: pointer; user-select: none; }
+.oneoff summary::-webkit-details-marker { display: none; }
+.oneoff .leg-caret { transition: transform .15s; color: var(--muted); flex: none; }
+.oneoff[open] > summary .oo-title .leg-caret,
+.oo-year[open] > summary .leg-caret,
+.oo-month[open] > summary .leg-caret { transform: rotate(90deg); }
+.oneoff > summary { display: grid; gap: 4px; }
+.oo-title { display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; }
+.oo-total { padding-left: 22px; }
+.oo-line { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.oo-line b { color: var(--text); font-weight: 600; }
+.oo-body { margin-top: 8px; }
+.oo-year, .oo-month { border-top: 1px solid var(--border); }
+.oo-year > summary, .oo-month > summary {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 10px; padding: 8px 2px;
+}
+.oo-month { margin-left: 16px; }
+.oo-head { display: flex; align-items: center; gap: 6px; }
+.oo-head b { font-weight: 600; }
+.oo-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 4px 7px 22px; margin-left: 16px;
+  border-top: 1px solid var(--border); cursor: pointer; border-radius: 8px;
+}
+.oo-row:hover { background: var(--surface-2); }
+.oo-name { flex: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 7px; min-width: 0; }
+.oo-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oo-amount { flex: none; font-weight: 600; font-variant-numeric: tabular-nums; }
+.oo-row.paid .oo-text,
+.oo-row.paid .oo-amount { color: var(--muted); text-decoration: line-through; text-decoration-color: rgba(139,151,168,.5); }
+.oo-row.paid .oo-amount { font-weight: 500; }
+.oo-overdue {
+  font-size: 11px; color: var(--red); background: rgba(226,109,90,.16);
+  padding: 1px 7px; border-radius: 999px; white-space: nowrap;
+}
+
 .empty { color: var(--muted); padding: 24px; text-align: center; }
 .empty.small { padding: 10px 2px; text-align: left; }
 

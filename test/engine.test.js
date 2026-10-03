@@ -13,6 +13,7 @@ import {
   loadZone,
   buildTimeline,
   freezeRegular,
+  oneOffSummary,
   installmentSummaries,
   groupThousands,
   fmtMoney,
@@ -784,5 +785,54 @@ describe('freezeRegular — правка регулярного не переп�
     assert.equal(freezeRegular(s, s.regulars[0], '2026-03-10').since, '2026-03-15');
     assert.equal(freezeRegular(s, s.regulars[0], '2026-03-15').since, '2026-03-15');
     assert.equal(freezeRegular(s, s.regulars[0], '2026-03-16').since, '2026-03-31');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+describe('oneOffSummary — разовые платежи в «Долгах»', () => {
+  const s = {
+    settings: { banks: [], startPeriod: '2026-09-15' },
+    regulars: [{ id: 'net', name: 'Интернет', kind: 'expense', amount: 900, schedule: 'mid', active: true }],
+    installments: [{ id: 'i1', name: 'Ноутбук', total: 20000, bank: 'Тбанк',
+      plan: [{ period: '2026-10-15', amount: 10000 }, { period: '2026-11-15', amount: 10000 }] }],
+    records: [
+      { id: 'a', period: '2026-09-15', kind: 'expense', name: 'Штраф', amount: 1500, paid: false },
+      { id: 'b', period: '2026-09-30', kind: 'expense', name: 'Билеты', amount: 8400, paid: true },
+      { id: 'c', period: '2026-10-15', kind: 'expense', name: 'Вернёт Саша', amount: -5000, paid: false },
+      { id: 'd', period: '2026-10-31', kind: 'expense', name: 'Шины', amount: 18600, paid: false },
+      { id: 'e', period: '2027-02-15', kind: 'expense', name: 'Отпуск', amount: 40000, paid: false },
+      { id: 'f', period: '2026-10-15', kind: 'expense', name: 'Интернет', amount: 900, paid: true, regularId: 'net' },
+      { id: 'g', period: '2026-10-31', kind: 'income', name: 'Премия', amount: 30000, paid: false },
+    ],
+  };
+  const r = oneOffSummary(buildTimeline(s, '2027-03-31'), '2026-10-03');
+
+  test('берёт только разовые: без регулярных, рассрочек, «мне должны» и дохода', () => {
+    const names = r.years.flatMap(y => y.months.flatMap(m => m.rows.map(x => x.name)));
+    assert.deepEqual(names, ['Штраф', 'Билеты', 'Шины', 'Отпуск']);
+  });
+
+  test('годы и месяцы от ранних к поздним', () => {
+    assert.deepEqual(r.years.map(y => y.year), ['2026', '2027']);
+    assert.deepEqual(r.years[0].months.map(m => m.month), ['2026-09', '2026-10']);
+  });
+
+  test('итоги сходятся на всех уровнях', () => {
+    assert.deepEqual({ left: r.left, paid: r.paid, unpaid: r.unpaid }, { left: 60100, paid: 8400, unpaid: 3 });
+    const y = r.years[0];
+    assert.deepEqual({ left: y.left, paid: y.paid, unpaid: y.unpaid }, { left: 20100, paid: 8400, unpaid: 2 });
+    const sep = y.months[0];
+    assert.deepEqual({ left: sep.left, paid: sep.paid, unpaid: sep.unpaid }, { left: 1500, paid: 8400, unpaid: 1 });
+    assert.equal(r.years.reduce((a, x) => a + x.left, 0), r.left);
+  });
+
+  test('просрочен = не оплачен и дата уже прошла', () => {
+    const rows = r.years.flatMap(y => y.months.flatMap(m => m.rows));
+    assert.deepEqual(rows.filter(x => x.overdue).map(x => x.name), ['Штраф']);
+  });
+
+  test('нет разовых — пустой результат', () => {
+    const e = oneOffSummary(buildTimeline({ ...s, records: [] }, '2026-12-31'), '2026-10-03');
+    assert.deepEqual(e, { left: 0, paid: 0, unpaid: 0, years: [] });
   });
 });

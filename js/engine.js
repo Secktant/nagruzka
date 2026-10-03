@@ -284,6 +284,31 @@ export function outstanding(state, timeline, from, to, today) {
   };
 }
 
+// Разовые платежи для «Долгов»: годы → месяцы → строки, от ранних к поздним.
+// Разовый = не регулярный, не рассрочка и сумма > 0 — то же правило, что в
+// outstanding(): «мне должны» (отрицательные) сюда не входят вовсе.
+// Итоги на каждом уровне: left — не оплачено, paid — оплачено, unpaid — сколько
+// неоплаченных. overdue — не оплачен и дата периода уже прошла.
+export function oneOffSummary(timeline, today) {
+  const blank = () => ({ left: 0, paid: 0, unpaid: 0 });
+  const add = (t, p) => { if (p.paid) t.paid += p.amount; else { t.left += p.amount; t.unpaid++; } };
+  const total = blank();
+  const years = [];
+  for (const day of timeline.values()) {          // лента уже по возрастанию дат
+    for (const p of day.payments) {
+      if (p.regularId || p.installmentId || !(p.amount > 0)) continue;
+      const year = day.period.slice(0, 4), month = day.period.slice(0, 7);
+      let y = years[years.length - 1];
+      if (!y || y.year !== year) years.push(y = { year, ...blank(), months: [] });
+      let m = y.months[y.months.length - 1];
+      if (!m || m.month !== month) y.months.push(m = { month, ...blank(), rows: [] });
+      m.rows.push({ ...p, period: day.period, overdue: !p.paid && day.period < today });
+      add(total, p); add(y, p); add(m, p);
+    }
+  }
+  return { ...total, years };
+}
+
 // Сводка по рассрочкам из готовой ленты: внесено, осталось, дата закрытия.
 export function installmentSummaries(state, timeline) {
   const out = [];
@@ -362,6 +387,7 @@ export function fmtPeriod(p) {
 // Месяц в родительном падеже: «после августа», «после мая». Склеивать окончание
 // к именительному нельзя — выйдет «майа»/«июнья».
 export const monthGen = (m) => MONTHS_GEN[m - 1];
+export const monthNom = (m) => MONTHS_NOM[m - 1];
 export function fmtMonth(y, m) {
   return `${MONTHS_NOM[m - 1]} ${y}`;
 }

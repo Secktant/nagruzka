@@ -583,7 +583,8 @@ async function materialize(period, p, overrides = {}, act = null) {
 
 // ─────────────────── форма платежа (добавить/править) ───────────────────
 
-function openPaymentForm(period, key) {
+// Экспорт — для «Долгов»: тап по разовому платежу открывает ту же модалку (п.17).
+export function openPaymentForm(period, key) {
   const p = key ? findPayment(period, key) : null;
   const isNew = !p;
   const isVirtual = p?.virtual;

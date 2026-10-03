@@ -7,10 +7,54 @@ import { S, recalc, putInstallment, deleteInstallment, deleteRecord, logChange, 
 import { render } from '../render.js';
 import { $, $$, esc, uid, parseMoney, fmtNumEditor, moneyInput, openModal, closeModal } from '../dom.js';
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
-import { buildTimeline, installmentSummaries, generatePeriods, fmtMoney, fmtPeriod, loadZone } from '../engine.js';
-import { todayISO, horizonEnd, fmtPeriodFull, plural } from '../format.js';
+import { buildTimeline, installmentSummaries, generatePeriods, fmtMoney, fmtPeriod, loadZone, oneOffSummary, monthNom } from '../engine.js';
+import { todayISO, horizonEnd, fmtPeriodFull, plural, payKey } from '../format.js';
 import { icon } from '../icons.js';
 import { autoDistribute, LEVELS } from '../autoplan.js';
+import { openPaymentForm } from './periods.js';
+
+// Разовые платежи (п.17): только обзор, без галок — оплата ставится в «Периодах».
+// Уровни раскрываются сами: текущий год и месяц, где есть неоплаченное. То, что
+// раскрыли или свернули руками, живёт в памяти модуля до перезагрузки, иначе
+// каждая перерисовка (а она идёт на любое действие) сбрасывала бы раскрытое.
+const oneOffOpen = new Map();   // 'y:2026' | 'm:2026-10' → boolean
+
+function oneOffHTML(today) {
+  const sum = oneOffSummary(S.timeline, today);
+  if (!sum.years.length) return '';
+  const line = t => t.unpaid
+    ? `осталось <b>${fmtMoney(t.left)}</b> · оплачено ${fmtMoney(t.paid)}`
+    : `всё оплачено · ${fmtMoney(t.paid)}`;
+  const opened = (key, byDefault) => (oneOffOpen.has(key) ? oneOffOpen.get(key) : byDefault) ? ' open' : '';
+  const caret = icon('chevronRight', 'leg-caret');
+  const row = r => `
+    <div class="oo-row ${r.paid ? 'paid' : ''}" data-oo-period="${r.period}" data-oo-key="${esc(payKey(r))}">
+      <span class="oo-name"><span class="oo-text">${esc(r.name)}</span>
+        ${r.bank ? `<span class="bank-tag">${esc(r.bank)}</span>` : ''}
+        <span class="bank-tag">${fmtPeriod(r.period)}</span>
+        ${r.overdue ? '<span class="oo-overdue">просрочен</span>' : ''}</span>
+      <span class="oo-amount">${fmtMoney(r.amount)}</span>
+    </div>`;
+  const month = m => `
+    <details class="oo-month" data-oo="m:${m.month}"${opened('m:' + m.month, m.unpaid > 0)}>
+      <summary><span class="oo-head">${caret}${monthNom(Number(m.month.slice(5)))}</span><span class="oo-line">${line(m)}</span></summary>
+      ${m.rows.map(row).join('')}
+    </details>`;
+  const year = y => `
+    <details class="oo-year" data-oo="y:${y.year}"${opened('y:' + y.year, y.year === today.slice(0, 4))}>
+      <summary><span class="oo-head">${caret}<b>${y.year}</b></span><span class="oo-line">${line(y)}</span></summary>
+      ${y.months.map(month).join('')}
+    </details>`;
+  const isOpen = localStorage.getItem('oneOffOpen') === '1';
+  return `
+    <details class="card oneoff" id="oneoff-debts"${isOpen ? ' open' : ''}>
+      <summary>
+        <span class="oo-title">${caret}Разовые платежи<span class="dc-count">${sum.unpaid ? `${sum.unpaid} не оплачено` : 'всё оплачено'}</span></span>
+        <span class="oo-line oo-total">${line(sum).replace('осталось', 'Осталось').replace('всё оплачено', 'Всё оплачено')}</span>
+      </summary>
+      <div class="oo-body">${sum.years.map(year).join('')}</div>
+    </details>`;
+}
 
 export function renderDebts() {
   const sums = installmentSummaries(S.state, S.timeline);
@@ -71,11 +115,25 @@ export function renderDebts() {
       </div>` : ''}
     </div>` : ''}
     ${open.map(card).join('') || '<div class="empty">Активных рассрочек нет 🎉</div>'}
+    ${oneOffHTML(todayISO())}
     ${closed.length ? `
     <details class="debt-closed" id="closed-debts"${closedOpen ? ' open' : ''}>
       <summary>${icon('chevronRight', 'leg-caret')}Закрытые<span class="dc-count">${closed.length}</span></summary>
       <div class="dc-body">${closed.map(card).join('')}</div>
     </details>` : ''}`;
+
+  const oneOffEl = $('#oneoff-debts');
+  if (oneOffEl) {
+    oneOffEl.addEventListener('toggle', e => {
+      // toggle не всплывает: слушаем на захвате и различаем раздел и вложенные уровни
+      if (e.target === oneOffEl) localStorage.setItem('oneOffOpen', oneOffEl.open ? '1' : '0');
+      else if (e.target.dataset.oo) oneOffOpen.set(e.target.dataset.oo, e.target.open);
+    }, true);
+    oneOffEl.addEventListener('click', e => {
+      const r = e.target.closest('.oo-row');
+      if (r) openPaymentForm(r.dataset.ooPeriod, r.dataset.ooKey);
+    });
+  }
 
   const closedEl = $('#closed-debts');
   if (closedEl) closedEl.addEventListener('toggle', () => localStorage.setItem('closedDebtsOpen', closedEl.open ? '1' : '0'));
