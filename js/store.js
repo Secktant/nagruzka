@@ -32,7 +32,8 @@ async function persist() {
 // После любого сохранения помечаем «грязным» для синка. Все мутаторы — это persist+markDirty,
 // т.к. state в памяти всегда актуален (вызывающий код обновляет его до сохранения).
 export const markDirty = () => S.syncEngine?.notifyLocalChange();
-export const saveAll = async () => { await persist(); markDirty(); };
+// Дожидаемся записи dirty-маркера в IndexedDB, даже если сетевой push ещё не завершён.
+export const saveAll = async () => { await persist(); await markDirty(); };
 export const putRecord = saveAll, deleteRecord = saveAll;
 export const putRegular = saveAll, deleteRegular = saveAll;
 export const putInstallment = saveAll, deleteInstallment = saveAll;
