@@ -17,7 +17,8 @@ import {
   AAD_MAIN,
 } from '../js/sync.js';
 import { exportState } from '../js/db.js';
-import { sealGCM, openGCM } from '../js/crypto.js';
+import { sealGCM, openGCM, b64 } from '../js/crypto.js';
+import { SyncEngine } from '../js/sync.js';
 
 // ─────────────────────────────────────────────────────────────────────────────
 describe('base64url (_b64url) — url-safe без паддинга', () => {
@@ -155,5 +156,95 @@ describe('AAD чанка: метка вместо id ячейки', () => {
     const sealed = await sealGCM(await key(KEY_BITS), '{"мои":"деньги"}', AAD_MAIN);
     const other = await key(OTHER_BITS);
     await assert.rejects(() => openGCM(other, sealed, AAD_MAIN));
+  });
+});
+
+
+describe('SyncEngine: сохранность локальных изменений', () => {
+  const makeKey = () => crypto.subtle.importKey(
+    'raw', new Uint8Array(32).map((_, i) => i + 1), 'AES-GCM', false, ['encrypt', 'decrypt'],
+  );
+  const makeEngine = async () => {
+    let pending = null;
+    const applied = [], statuses = [];
+    const engine = new SyncEngine({
+      getStateJSON: () => JSON.stringify({
+        app: 'nagruzka', version: 1, exportedAt: '2026-10-30T00:00:00.000Z',
+        settings: { local: true }, records: [{ id: 'payment-1', paid: true }],
+      }),
+      applyStateJSON: async (json) => { applied.push(json); },
+      getKeyfile: () => null,
+      savePendingSync: async (marker) => { pending = { ...marker }; },
+      clearPendingSync: async () => { pending = null; },
+      onStatus: (status) => statuses.push(status),
+    });
+    await engine.prepare('TEST_SYNC_ID');
+    engine.key = await makeKey(); engine.salt = new Uint8Array(16); engine.version = 1;
+    return { engine, get pending() { return pending; }, applied, statuses };
+  };
+
+  test('persistiert dirty-Marker und löscht ihn erst nach bestätigtem push', async () => {
+    const oldFetch = globalThis.fetch, ctx = await makeEngine();
+    try {
+      globalThis.fetch = async () => ({ ok: true, json: async () => [{ ok: true, version: 2 }] });
+      await ctx.engine.notifyLocalChange();
+      assert.deepEqual(ctx.pending, { baseVersion: 1 });
+      await ctx.engine.pushNow();
+      assert.equal(ctx.pending, null);
+      assert.equal(ctx.engine.version, 2);
+      assert.equal(ctx.engine.hasPendingLocalChanges, false);
+      assert.equal(ctx.statuses.at(-1), 'synced');
+    } finally { ctx.engine.stop(); globalThis.fetch = oldFetch; }
+  });
+
+  test('конфликт push не применяет серверный снимок поверх локального', async () => {
+    const oldFetch = globalThis.fetch, ctx = await makeEngine();
+    try {
+      const remoteJSON = JSON.stringify({
+        app: 'nagruzka', version: 1, exportedAt: '2026-10-29T00:00:00.000Z',
+        settings: { remote: true }, records: [{ id: 'payment-1', paid: false }],
+      });
+      const remoteBlob = await sealGCM(ctx.engine.key, remoteJSON, AAD_MAIN);
+      globalThis.fetch = async () => ({ ok: true, json: async () => [{
+        ok: false, version: 2, salt: b64.enc(ctx.engine.salt), blob: b64.enc(remoteBlob),
+      }] });
+      await ctx.engine.notifyLocalChange(); await ctx.engine.pushNow();
+      assert.equal(ctx.applied.length, 0);
+      assert.deepEqual(ctx.pending, { baseVersion: 1 });
+      assert.equal(ctx.engine.hasPendingLocalChanges, true);
+      assert.equal(ctx.statuses.at(-1), 'conflict');
+    } finally { ctx.engine.stop(); globalThis.fetch = oldFetch; }
+  });
+
+  test('pull, начатый до локальной правки, не перезаписывает её после ответа', async () => {
+    const oldFetch = globalThis.fetch, ctx = await makeEngine();
+    try {
+      const remoteJSON = JSON.stringify({
+        app: 'nagruzka', version: 1, exportedAt: '2026-10-29T00:00:00.000Z',
+        settings: { remote: true }, records: [{ id: 'payment-1', paid: false }],
+      });
+      const remoteBlob = await sealGCM(ctx.engine.key, remoteJSON, AAD_MAIN);
+      let resolveFetch;
+      globalThis.fetch = () => new Promise((resolve) => { resolveFetch = resolve; });
+      const pulling = ctx.engine.pullAndApply();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await ctx.engine.notifyLocalChange();
+      resolveFetch({ ok: true, json: async () => [{
+        version: 2, salt: b64.enc(ctx.engine.salt), blob: b64.enc(remoteBlob),
+      }] });
+      await pulling;
+      assert.equal(ctx.applied.length, 0);
+      assert.equal(ctx.engine.hasPendingLocalChanges, true);
+      assert.deepEqual(ctx.pending, { baseVersion: 1 });
+    } finally { ctx.engine.stop(); globalThis.fetch = oldFetch; }
+  });
+
+  test('dirty-маркер восстанавливает базовую версию после перезапуска', () => {
+    const engine = new SyncEngine({ getStateJSON: () => '{}', savePendingSync: async () => {}, clearPendingSync: async () => {} });
+    assert.equal(engine.restorePending({ baseVersion: 7 }), true);
+    assert.equal(engine.version, 7);
+    assert.equal(engine.hasPendingLocalChanges, true);
+    assert.equal(engine.restorePending({ baseVersion: -1 }), false);
+    engine.stop();
   });
 });
