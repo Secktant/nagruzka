@@ -135,12 +135,6 @@ export const getSyncId = (db) => getKV(db, 'syncId');
 export const setSyncId = (db, str) => tx(db, 'kv', 'readwrite', s => s.put(str, 'syncId'));
 export const clearSyncId = (db) => tx(db, 'kv', 'readwrite', s => s.delete('syncId'));
 
-// Dirty-маркер синхронизации переживает закрытие PWA, чтобы повторить неподтверждённый
-// push при старте вместо перезаписи локального снимка серверной копией.
-export const getSyncPending = (db) => getKV(db, 'syncPending');
-export const setSyncPending = (db, obj) => tx(db, 'kv', 'readwrite', s => s.put(obj, 'syncPending'));
-export const clearSyncPending = (db) => tx(db, 'kv', 'readwrite', s => s.delete('syncPending'));
-
 // Сессионный ключ синка для «запомнить на устройстве»: { key: CryptoKey (неэкспортируемый), salt }.
 // Хранится в kv, в экспорт НЕ попадает. Позволяет возобновлять синк без повторного ввода пароля.
 export const getSyncKey = (db) => getKV(db, 'syncKey');

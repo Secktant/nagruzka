@@ -6,7 +6,7 @@ import { S, adoptStateJSON } from './store.js';
 import { render } from './render.js';
 import { $, openModal, closeModal } from './dom.js';
 import { icon } from './icons.js';
-import { exportState, getKeyfile, getSyncPending, setSyncPending, clearSyncPending, getSyncKey, setLock, clearSyncKey, hasVault, loadVault } from './db.js';
+import { exportState, getKeyfile, setLock, clearSyncKey, hasVault, loadVault } from './db.js';
 import { deriveKeyRaw, importAesKey } from './crypto.js';
 import { SyncEngine } from './sync.js';
 import { webauthnSupported, registerBiometric, unlockBiometric } from './lock.js';
@@ -17,7 +17,7 @@ export function updateSyncStatusUI() {
   const map = {
     off: ['—', ''], locked: ['🔒 заблокировано', 'off'],
     syncing: ['синхронизация…', 'on'], synced: ['✓ синхронизировано', 'on'],
-    offline: ['⚠ сервер недоступен', 'warn'], conflict: ['⚠ конфликт — локальные изменения сохранены', 'warn'],
+    offline: ['⚠ сервер недоступен', 'warn'], conflict: ['⚠ был конфликт, взято свежее', 'warn'],
     error: ['⚠ ошибка', 'warn'],
   };
   const [text, cls] = map[S.syncStatus] || ['—', ''];
@@ -34,8 +34,6 @@ export function createSyncEngine() {
       render();
     },
     getKeyfile: () => S.currentKeyfile || null,
-    savePendingSync: (marker) => setSyncPending(S.db, marker),
-    clearPendingSync: () => clearSyncPending(S.db),
     onStatus: (s) => { S.syncStatus = s; updateSyncStatusUI(); updateConnBanner(s); },
     onSaved: () => showToast('ok', '✓ Сохранено и синхронизировано', 2000), // на каждую правку
   });
@@ -86,7 +84,7 @@ function dismissToast(kind) {
 export function updateConnBanner(s) {
   if (s === 'syncing') return;                       // транзиентное — не трогаем плашку
   if (s === 'off' || s === 'locked') { hideToast(); prevConn = null; return; }
-  if (s === 'conflict') { showToast('warn', 'Конфликт: локальные изменения сохранены, но не синхронизированы', 5000); return; }
+  if (s === 'conflict') { showToast('warn', 'Был конфликт — взято свежее', 3000); return; }
   if (s === 'synced') {
     if (prevConn !== 'synced') showToast('ok', 'Соединение установлено', 2500); // первый раз / после сбоя
     prevConn = 'synced'; return;

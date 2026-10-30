@@ -2,7 +2,7 @@ name: CI + Deploy
 
 on:
   push:
-    branches: [main, fix/ios-sync-pending-state]
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
@@ -58,8 +58,8 @@ jobs:
   deploy:
     name: Публикация на GitHub Pages
     needs: ci
-    # main — обычный релиз; fix/ios-sync-pending-state — временная тестовая публикация.
-    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/ios-sync-pending-state') && github.event_name == 'push'
+    # деплоим только при пуше в main; на PR и других ветках гоняется лишь ci
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

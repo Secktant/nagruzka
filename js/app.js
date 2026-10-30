@@ -6,7 +6,7 @@ import { SEED } from './seed.js';
 import {
   initStore, loadState,
   saveVault, loadVault, hasVault, clearPlaintextStores,
-  getKeyfile, getSyncId, getSyncKey, getSyncPending, getLock,
+  getKeyfile, getSyncId, getSyncKey, getLock,
 } from './db.js';
 import { render } from './render.js';
 import { renderPeriods, isYearView } from './views/periods.js';
@@ -69,14 +69,10 @@ async function main() {
       await S.syncEngine.prepare(sid);   // вычислить id чанка/меты из Sync ID
       S.syncEngine.key = S.vaultKey;
       S.syncEngine.salt = S.vaultSalt;
-      // Dirty-маркер означает, что прошлый запуск не дождался подтверждения push.
-      // В этом случае повторяем отправку локального состояния, а не pull.
-      const pendingSync = await getSyncPending(S.db);
-      if (pendingSync) S.syncEngine.restorePending(pendingSync);
-      S.syncStatus = pendingSync ? 'syncing' : 'synced';
+      S.syncEngine.version = 0;      // подтянем актуальную версию из сервера ниже
+      S.syncStatus = 'synced';
       S.syncEngine.start();
-      if (S.syncEngine.hasPendingLocalChanges) S.syncEngine.pushNow();
-      else S.syncEngine.pullAndApply();
+      S.syncEngine.pullAndApply();
     }
   }
   $('#prev-month').addEventListener('click', () => periodsNav(-1));
