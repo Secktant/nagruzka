@@ -59,7 +59,7 @@ jobs:
     name: Публикация на GitHub Pages
     needs: ci
     # main — обычный релиз; fix/ios-sync-pending-state — временная тестовая публикация.
-    if: (github.ref == 'refs/heads/main' && github.event_name == 'push') || (github.event_name == 'pull_request' && github.event.action == 'reopened' && github.event.pull_request.head.ref == 'fix/ios-sync-pending-state')
+    if: (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/fix/ios-sync-pending-state') && github.event_name == 'push'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
