@@ -43,5 +43,5 @@ export function exportLog() {
     '',
     ...read().map(row => row.time + '  ' + row.event +
       (Object.keys(row.details || {}).length ? '  ' + JSON.stringify(row.details) : '')),
-  ].join('\\n');
+  ].join('\n');
 }
