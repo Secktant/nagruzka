@@ -9,6 +9,7 @@ import { S, markDirty, adoptStateJSON } from '../store.js';
 import { render } from '../render.js';
 import { $, esc, parseMoney, withBusy } from '../dom.js';
 import { icon } from '../icons.js';
+import { logEvent, getLogEntries, clearLog, exportLog } from '../diagnostics.js';
 import { todayISO } from '../format.js';
 import { generateKeyfile, parseKeyfileText, b64, encryptText, encryptTextWithKey, decryptToText, inspect } from '../crypto.js';
 import { isConfigured as syncConfigured, generateSyncId, isValidSyncId, deriveChunkId, CHUNK_NAGRUZKA, AAD_MAIN } from '../sync.js';
@@ -26,6 +27,8 @@ import {
 // На успешном пути инпут пересоздаётся вызовом render(), а на неудачном (неверный пароль,
 // чужой файл, отказ от замены) — оставался с прежним значением, и повторная попытка с ТЕМ ЖЕ
 // файлом молча не срабатывала до перезагрузки страницы. Поэтому чистим value всегда.
+let diagnosticsOpen = false;
+
 function resetFileInput(input) {
   if (input) input.value = '';
 }
@@ -51,6 +54,26 @@ export async function renderSettings() {
            ${S.vaultKey ? '<p class="hint">Один раз подтвердишь пароль → дальше вход по Face/Touch ID (пароль — запасной).</p>' : '<p class="hint">Сначала включи синхронизацию — замок использует тот же ключ.</p>'}`}
     </section>` : '';
 
+  if (diagnosticsOpen) {
+    const entries = getLogEntries().slice().reverse();
+    const rows = entries.map(row => {
+      const failed = /ERROR|FAILED|REJECTION|OFFLINE/.test(row.event);
+      const detail = Object.entries(row.details || {}).map(([k, v]) => k + ': ' + esc(v)).join(' · ');
+      return '<div class="diag-row"><span class="diag-dot ' + (failed ? 'bad' : 'ok') + '"></span>' +
+        '<span class="diag-time">' + esc(new Date(row.time).toLocaleTimeString()) + '</span>' +
+        '<div class="diag-main"><b>' + esc(row.event) + '</b>' + (detail ? '<small>' + detail + '</small>' : '') + '</div></div>';
+    }).join('');
+    $('#view-settings').innerHTML = '<div class="section-head"><button class="btn" id="diag-back">← Настройки</button><h2>Журнал диагностики</h2></div>' +
+      '<section class="card"><p class="hint">Только технические события. Финансовые данные, пароли, ключи и Sync ID не записываются.</p>' +
+      '<div class="form-actions" style="justify-content:flex-start"><button class="btn primary" id="diag-copy">' + icon('copy') + ' Копировать журнал</button>' +
+      '<button class="btn danger" id="diag-clear">Очистить журнал</button></div>' +
+      '<div class="diag-meta">' + entries.length + ' из 500 последних событий · ' + (navigator.onLine ? 'В сети' : 'Нет соединения') + '</div>' +
+      '<div class="diag-list">' + (rows || '<p class="hint">Записей пока нет.</p>') + '</div></section>';
+    $('#diag-back').onclick = () => { diagnosticsOpen = false; render(); };
+    $('#diag-copy').onclick = async () => { const value = exportLog(); try { await navigator.clipboard.writeText(value); alert('Журнал скопирован ✓'); } catch { prompt('Скопируй журнал:', value); } };
+    $('#diag-clear').onclick = () => { if (!confirm('Очистить локальный журнал диагностики?')) return; clearLog(); logEvent('LOG_CLEARED'); render(); };
+    return;
+  }
   // Ключ данных = Argon2id(пароль ⊕ keyfile ЭТОГО устройства). Пока данные зашифрованы
   // (сейф или замок), подмена keyfile молча ломает следующий ввод пароля: ключ выйдет
   // другим и сейф не откроется. Поэтому менять keyfile можно только без ключа;
@@ -116,7 +139,11 @@ export async function renderSettings() {
         ${!kf ? 'Без keyfile данные защищает только пароль — нужна длинная фраза из 5–6 случайных слов. Если синк уже настроен на другом устройстве с keyfile, сначала загрузи его сюда.' : ''}
       </p>` : ''}
     </section>` : ''}
-    ${lockCard}`;
+    ${lockCard}
+    <section class="card diag-entry"><button class="diag-open" id="diag-open">${icon('fileText')}<span><b>Журнал диагностики</b><small>Технические события и ошибки приложения</small></span>${icon('chevronRight')}</button></section>
+    <p class="hint diag-version">Версия приложения: ${esc(document.querySelector('#app-version')?.textContent || '—')}</p>`;
+
+  if ($('#diag-open')) $('#diag-open').onclick = () => { diagnosticsOpen = true; logEvent('DIAGNOSTICS_OPENED'); render(); };
 
   // Замок (Шаг 5): включение через модалку (пароль в окне + Face ID по отдельной кнопке —
   // иначе iOS Safari бросает «document is not focused» на create() после нативного prompt).

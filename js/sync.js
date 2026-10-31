@@ -5,6 +5,7 @@
 
 import { SUPABASE_URL, SUPABASE_ANON } from './sync-config.js';
 import { deriveKey, sealGCM, openGCM, randomSalt, b64 } from './crypto.js';
+import { logEvent } from './diagnostics.js';
 
 export function isConfigured() { return !!(SUPABASE_URL && SUPABASE_ANON); }
 
@@ -114,7 +115,7 @@ export class SyncEngine {
     this._pushTimer = null;
   }
 
-  status(s) { this.opts.onStatus?.(s); }
+  status(s) { logEvent('SYNC_STATUS', { status: s }); this.opts.onStatus?.(s); }
 
   // Вычислить локаторы (id чанка/меты) из сырого Sync ID. Зовётся в unlock и при
   // восстановлении сохранённого ключа на старте (app.js), до любых сетевых вызовов.
@@ -167,19 +168,23 @@ export class SyncEngine {
   async pushNow() {
     if (!this.key) return;
     this.status('syncing');
+    logEvent('SYNC_PUSH_STARTED', { version: this.version });
     try {
       const blob = await sealGCM(this.key, this.opts.getStateJSON(), AAD_MAIN);
       const r = await push(this.chunkId, b64.enc(this.salt), b64.enc(blob), this.version);
       if (r.ok) {
         this.version = r.version;
+        logEvent('SYNC_PUSH_SUCCESS', { version: this.version });
         this.status('synced');
         this.opts.onSaved?.();   // правка сохранена и улетела на сервер — для зелёной плашки
       } else {
         // на сервере оказалось свежее: тянем и применяем, затем статус «конфликт»
+        logEvent('SYNC_CONFLICT', { version: r.version });
         await this.pullAndApply();
         this.status('conflict');
       }
-    } catch {
+    } catch (e) {
+      logEvent('SYNC_PUSH_FAILED', { errorName: e?.name || 'Error' });
       this.status('offline');
     }
   }
@@ -188,9 +193,11 @@ export class SyncEngine {
   async pullAndApply() {
     if (!this.key) return;
     let remote;
+    logEvent('SYNC_PULL_STARTED', { version: this.version });
     try {
       remote = await pull(this.chunkId);       // сеть
     } catch (e) {
+      logEvent('SYNC_PULL_FAILED', { errorName: e?.name || 'Error' });
       this.status('offline'); return;          // сервер реально недоступен
     }
     try {
@@ -199,8 +206,10 @@ export class SyncEngine {
         this.version = remote.version;
         await this.opts.applyStateJSON(json);
       }
+      logEvent('SYNC_PULL_SUCCESS', { version: this.version });
       this.status('synced');                   // связь есть (применили или нечего)
     } catch (e) {
+      logEvent('SYNC_APPLY_FAILED', { errorName: e?.name || 'Error' });
       this.status('error');                    // не сервер, а пароль/keyfile
     }
   }

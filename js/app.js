@@ -15,6 +15,7 @@ import { createSyncEngine, runLockGate } from './sync-ui.js';
 import { isConfigured as syncConfigured } from './sync.js';
 import { $, $$, wireMoneyInputs, closeModal } from './dom.js';
 import { S } from './store.js';
+import { logEvent } from './diagnostics.js';
 
 
 // ───────────────────────── запуск ─────────────────────────
@@ -37,6 +38,7 @@ function periodsNav(delta) {
 
 
 async function main() {
+  logEvent('APP_STARTED');
   S.db = await initStore(SEED);
   S.currentKeyfile = await getKeyfile(S.db);
   const lock = await getLock(S.db);
@@ -181,6 +183,11 @@ async function showVersion() {
   } catch { /* caches недоступны — метка остаётся пустой */ }
 }
 if ('serviceWorker' in navigator) navigator.serviceWorker.ready.then(showVersion).catch(() => {});
+
+window.addEventListener('error', e => logEvent('JS_ERROR', { errorName: e.error?.name || 'Error' }));
+window.addEventListener('unhandledrejection', e => logEvent('UNHANDLED_REJECTION', { errorName: e.reason?.name || 'Rejection' }));
+window.addEventListener('online', () => logEvent('NETWORK_ONLINE'));
+window.addEventListener('offline', () => logEvent('NETWORK_OFFLINE'));
 
 // прячем стартовый лоадер, когда приложение построено (или упало — не висеть вечно)
 main().finally(() => document.getElementById('boot-loader')?.classList.add('is-hidden'));
