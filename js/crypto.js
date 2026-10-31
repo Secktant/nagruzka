@@ -28,17 +28,14 @@ function argon2() {
 export const b64 = {
   enc: (bytes) => {
     const data = new Uint8Array(bytes);
-    try {
-      return btoa(String.fromCharCode(...data));
-    } catch (e) {
-      // Временная диагностика iOS: не логируем содержимое, только размер и исключение.
-      console.error('[sync] base64 encode failed', {
-        byteLength: data.byteLength,
-        name: e?.name || 'Error',
-        message: e?.message || String(e),
-      });
-      throw e;
+    // Не передаём весь массив одним spread: Safari ограничивает число аргументов.
+    // Блочное преобразование безопасно и для больших снимков синхронизации.
+    const chunkSize = 0x8000;
+    let binary = '';
+    for (let i = 0; i < data.length; i += chunkSize) {
+      binary += String.fromCharCode(...data.subarray(i, i + chunkSize));
     }
+    return btoa(binary);
   },
   dec: (str) => Uint8Array.from(atob(str), c => c.charCodeAt(0)),
 };
