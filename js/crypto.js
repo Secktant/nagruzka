@@ -26,7 +26,20 @@ function argon2() {
 // base64 ↔ байты. Живёт здесь, а не в замке и синке по копии в каждом: оба и так
 // импортируют этот модуль, а две копии одного кодека — приглашение к расхождению.
 export const b64 = {
-  enc: (bytes) => btoa(String.fromCharCode(...new Uint8Array(bytes))),
+  enc: (bytes) => {
+    const data = new Uint8Array(bytes);
+    try {
+      return btoa(String.fromCharCode(...data));
+    } catch (e) {
+      // Временная диагностика iOS: не логируем содержимое, только размер и исключение.
+      console.error('[sync] base64 encode failed', {
+        byteLength: data.byteLength,
+        name: e?.name || 'Error',
+        message: e?.message || String(e),
+      });
+      throw e;
+    }
+  },
   dec: (str) => Uint8Array.from(atob(str), c => c.charCodeAt(0)),
 };
 

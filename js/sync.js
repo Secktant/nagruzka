@@ -180,6 +180,8 @@ export class SyncEngine {
         this.status('conflict');
       }
     } catch (e) {
+      // Временная диагностика: причина push раньше терялась и превращалась в общий offline.
+      console.error('[sync] pushNow failed', e);
       this.status('offline');
     }
   }
