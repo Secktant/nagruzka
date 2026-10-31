@@ -179,9 +179,7 @@ export class SyncEngine {
         await this.pullAndApply();
         this.status('conflict');
       }
-    } catch (e) {
-      // Временная диагностика: причина push раньше терялась и превращалась в общий offline.
-      console.error('[sync] pushNow failed', e);
+    } catch {
       this.status('offline');
     }
   }
