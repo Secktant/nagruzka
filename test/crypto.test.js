@@ -37,6 +37,14 @@ const te = new TextEncoder();
 const salt16 = () => new Uint8Array(16).fill(7); // фиксированная соль для детерминизма
 
 // ─────────────────────────────────────────────────────────────────────────────
+describe('b64 — кодирование больших снимков синхронизации', () => {
+  test('кодирует и декодирует 120435 байт без ограничения spread-аргументов', () => {
+    const source = Uint8Array.from({ length: 120435 }, (_, i) => (i * 31 + 17) & 0xff);
+    const encoded = b64.enc(source);
+    assert.deepEqual(b64.dec(encoded), source);
+  });
+});
+
 describe('sealGCM / openGCM — сессионный AES-слой синка', () => {
   test('roundtrip: что запечатали, то и открыли', async () => {
     const key = await importAesKey(new Uint8Array(32).fill(1));
