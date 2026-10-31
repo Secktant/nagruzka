@@ -33,7 +33,7 @@ export function clearLog() {
 }
 export function exportLog() {
   const ua = navigator.userAgent || 'unknown';
-  const cacheVersion = [...(document.documentElement.dataset.appVersion ? [document.documentElement.dataset.appVersion] : [])][0] || 'см. в настройках';
+  const cacheVersion = document.querySelector('#app-version')?.textContent || 'см. в настройках';
   return [
     'НАГРУЗКА — ЖУРНАЛ ДИАГНОСТИКИ',
     'Сформирован: ' + new Date().toISOString(),
