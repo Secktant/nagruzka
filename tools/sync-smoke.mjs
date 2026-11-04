@@ -100,12 +100,21 @@ async function remoteId(d) {
   return d.page.evaluate(async row => JSON.parse(await qa.crypto.openGCM(
     qa.S.syncEngine.key, qa.crypto.b64.dec(row.blob), qa.sync.AAD_MAIN)).records[0]?.id, rows.get(chunk));
 }
-async function conflictUI(d) {
+async function settingsUI(d) {
   await d.page.evaluate(async () => {
     qa.S.view.tab = 'settings';
     (await import('/js/render.js')).render();
     await (await import('/js/views/settings.js')).renderSettings();
   });
+}
+async function assertConflictButtonHidden(d) {
+  await settingsUI(d);
+  const button = d.page.locator('#sync-conflict');
+  const css = await button.evaluate(el => ({ hidden: el.hidden, display: getComputedStyle(el).display }));
+  assert.equal(await button.isVisible(), false, `No conflict: button must be invisible; ${JSON.stringify(css)}`);
+}
+async function conflictUI(d) {
+  await settingsUI(d);
   await d.page.locator('#sync-conflict').click();
   await d.page.locator('#conflict-local').waitFor();
 }
@@ -122,6 +131,7 @@ async function downloadCopy(d, side) {
 try {
   browser = await chromium.launch();
   const a = await device();
+  await assertConflictButtonHidden(a);
   a.offline = true; await edit(a, 'offline-edit'); await push(a);
   assert.equal(await status(a), 'offline'); assert.equal(await diskId(a), 'offline-edit');
   await reload(a); assert.equal(await localId(a), 'offline-edit');
@@ -148,6 +158,7 @@ try {
   await a.page.locator('#conflict-remote').click();
   await a.page.waitForFunction(() => qa.S.syncStatus === 'synced');
   assert.equal(await localId(a), 'device-b'); assert.equal(await diskId(a), 'device-b');
+  await assertConflictButtonHidden(a);
   console.log('✓ two devices → conflict → reload: both copies survive, .nz downloads decrypt, explicit remote choice succeeds');
 
   a.offline = true; await edit(a, 'keep-local'); await push(a);
@@ -161,6 +172,7 @@ try {
   await a.page.locator('#conflict-local').click();
   await a.page.waitForFunction(() => qa.S.syncStatus === 'synced');
   assert.equal(await remoteId(a), 'keep-local');
+  await assertConflictButtonHidden(a);
   console.log('✓ stale conflict dialog refreshes the new remote .nz; a repeated explicit local choice succeeds');
 
   // Отключение проверяется кнопкой, затем полным reload с восстановлением ключа.

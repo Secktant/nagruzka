@@ -741,6 +741,7 @@ dialog::backdrop { background: rgba(5, 8, 12, .6); backdrop-filter: blur(3px); }
   transition: transform .08s ease, border-color .15s ease, filter .15s ease, box-shadow .15s ease;
 }
 .btn:hover { border-color: var(--accent); }
+#sync-conflict[hidden] { display: none; }
 .btn:active { transform: scale(.97); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #0b1524; font-weight: 600; box-shadow: 0 4px 14px rgba(110,168,254,.28); }
 .btn.primary:hover { filter: brightness(1.08); }
