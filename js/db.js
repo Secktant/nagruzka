@@ -31,6 +31,7 @@ function tx(db, store, mode, fn) {
     fn(t.objectStore(store));
     t.oncomplete = () => resolve();
     t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error || new Error('Запись отменена'));
   });
 }
 
@@ -60,16 +61,18 @@ export async function initStore(seed) {
 }
 
 async function writeAll(db, data) {
-  await tx(db, 'kv', 'readwrite', s => {
-    s.put(data.settings, 'settings');
-    s.put(data.history || [], 'history');   // лог не массив записей, а одно значение — ему хватает kv
-  });
-  for (const name of STORES) {
-    await tx(db, name, 'readwrite', s => {
+  await new Promise((resolve, reject) => {
+    const t = db.transaction(['kv', ...STORES], 'readwrite');
+    t.objectStore('kv').put(data.settings, 'settings');
+    t.objectStore('kv').put(data.history || [], 'history');
+    for (const name of STORES) {
+      const s = t.objectStore(name);
       s.clear();
       (data[name] || []).forEach(r => s.put(r));
-    });
-  }
+    }
+    t.oncomplete = () => resolve();
+    t.onerror = t.onabort = () => reject(t.error || new Error('Запись отменена'));
+  });
 }
 
 export async function loadState(db) {
@@ -86,9 +89,23 @@ export async function loadState(db) {
 // --- Локальное шифрование «на месте» (этап 4b) ---
 // Сейф = весь снимок состояния, зашифрованный ключом синка (AES-GCM + AAD-привязка).
 // Когда сейф активен, плейнтекст-стора пусты, истина — в kv 'vault'.
-export async function saveVault(db, key, state) {
+export async function saveVault(db, key, state, { isCurrent = () => true, rekeySalt, syncJournal } = {}) {
+  const lock = rekeySalt ? await getLock(db) : null;
+  const sameKey = lock && await loadVault(db, key).then(Boolean, () => false);
   const blob = await sealGCM(key, exportState(state), VAULT_AAD);
-  await tx(db, 'kv', 'readwrite', s => s.put(blob, 'vault'));
+  if (!isCurrent()) return false;
+  await tx(db, 'kv', 'readwrite', s => {
+    s.put(blob, 'vault');
+    if (syncJournal) s.put(syncJournal.journal, 'sync:' + syncJournal.chunkId);
+    if (rekeySalt) {
+      s.put(true, 'vaultActive');
+      if (lock) {
+        s.put({ salt: rekeySalt, bio: sameKey ? lock.bio : null }, 'lock');
+        s.delete('syncKey');
+      } else s.put({ key, salt: rekeySalt }, 'syncKey');
+    }
+  });
+  return true;
 }
 export async function loadVault(db, key) {
   const blob = await getKV(db, 'vault');
@@ -140,6 +157,13 @@ export const clearSyncId = (db) => tx(db, 'kv', 'readwrite', s => s.delete('sync
 export const getSyncKey = (db) => getKV(db, 'syncKey');
 export const setSyncKey = (db, obj) => tx(db, 'kv', 'readwrite', s => s.put(obj, 'syncKey'));
 export const clearSyncKey = (db) => tx(db, 'kv', 'readwrite', s => s.delete('syncKey'));
+
+// Подтверждённая база и конфликт привязаны к ячейке. Финансовые данные конфликта
+// остаются серверным шифротекстом; локальная копия хранится в обычном сейфе.
+export const getSyncState = (db, chunkId) => getKV(db, 'sync:' + chunkId);
+export const setSyncState = (db, chunkId, state) => tx(db, 'kv', 'readwrite', s => s.put(state, 'sync:' + chunkId));
+export const getSyncEnabled = (db) => getKV(db, 'syncEnabled');
+export const setSyncEnabled = (db, enabled) => tx(db, 'kv', 'readwrite', s => s.put(enabled, 'syncEnabled'));
 
 export function exportState(state) {
   return JSON.stringify({
