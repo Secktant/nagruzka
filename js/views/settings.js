@@ -5,7 +5,7 @@
 // это данные, а не настройки приложения; здесь остался только «системный» слой.
 // ВНИМАНИЕ БЕЗОПАСНОСТИ: логика ключей/сейфа перенесена ДОСЛОВНО — не менять при распиле.
 
-import { S, markDirty, adoptStateJSON } from '../store.js';
+import { S, adoptStateJSON, flushLocalChanges } from '../store.js';
 import { render } from '../render.js';
 import { $, esc, parseMoney, withBusy } from '../dom.js';
 import { icon } from '../icons.js';
@@ -13,10 +13,10 @@ import { logEvent, getLogEntries, clearLog, exportLog } from '../diagnostics.js'
 import { todayISO } from '../format.js';
 import { generateKeyfile, parseKeyfileText, b64, encryptText, encryptTextWithKey, decryptToText, inspect } from '../crypto.js';
 import { isConfigured as syncConfigured, generateSyncId, isValidSyncId, deriveChunkId, CHUNK_NAGRUZKA, AAD_MAIN } from '../sync.js';
-import { createSyncEngine, updateSyncStatusUI, openLockSetup } from '../sync-ui.js';
+import { createSyncEngine, updateSyncStatusUI, openLockSetup, openSyncConflict } from '../sync-ui.js';
 import {
   exportState,
-  saveVault, hasVault, clearPlaintextStores, clearVault, saveLegacy,
+  clearVault, saveLegacy,
   getKeyfile, setKeyfile, clearKeyfile,
   getSyncId, setSyncId, clearSyncId,
   setSyncKey, clearSyncKey,
@@ -114,6 +114,7 @@ export async function renderSettings() {
     <section class="card">
       <h3>Синхронизация · realtime</h3>
       <div id="sync-status" class="keyfile-status"></div>
+      <button class="btn primary" id="sync-conflict" hidden style="margin-top:8px">Выбрать копию данных</button>
 
       <div class="lbl-like" style="margin-top:12px">Sync ID — должен СОВПАДАТЬ на обоих устройствах</div>
       ${sid
@@ -129,7 +130,7 @@ export async function renderSettings() {
       </div>
 
       <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
-        ${(S.syncStatus === 'synced' || S.syncStatus === 'syncing')
+        ${S.syncEngine?.enabled
           ? `<button class="btn" id="sync-off">Выключить синхронизацию</button>
              <button class="btn" id="sync-pass">Сменить пароль</button>`
           : `<button class="btn primary" id="sync-on" ${!sid ? 'disabled' : ''}>${icon('reg')} Включить синхронизацию</button>`}
@@ -293,7 +294,6 @@ export async function renderSettings() {
       if (!ok) return;
       await adoptStateJSON(json);
       render();
-      markDirty(); // если синк включён — выгрузить импортированные данные на сервер
       alert('Импорт выполнен ✓');
     } catch (err) {
       alert(err.message);
@@ -306,6 +306,7 @@ export async function renderSettings() {
   if (syncConfigured()) {
     updateSyncStatusUI();
     if (!S.syncEngine) S.syncEngine = createSyncEngine();
+    $('#sync-conflict').onclick = openSyncConflict;
 
     if ($('#sid-create')) $('#sid-create').onclick = async () => {
       const id = generateSyncId();
@@ -321,9 +322,11 @@ export async function renderSettings() {
       const txt = (prompt('Вставь Sync ID со второго устройства:') || '').trim();
       if (!txt) return;
       if (!isValidSyncId(txt)) { alert('Это не похоже на Sync ID «Нагрузки».'); return; }
+      await S.syncEngine.stop();
+      await flushLocalChanges();
       // смена Sync ID = другая ячейка: возвращаем данные в плейнтекст, сбрасываем ключ/сейф
       if (S.vaultKey) { await saveLegacy(S.db, S.state); await clearVault(S.db); S.vaultKey = null; }
-      if (S.syncEngine) { S.syncEngine.stop(); S.syncEngine.key = null; }
+      if (S.syncEngine) S.syncEngine.key = null;
       S.syncStatus = 'off';
       await clearSyncKey(S.db);
       await setSyncId(S.db, txt);
@@ -332,8 +335,10 @@ export async function renderSettings() {
     };
     if ($('#sid-clear')) $('#sid-clear').onclick = async () => {
       if (!confirm('Удалить Sync ID с этого устройства? Синхронизация здесь отключится.')) return;
+      await S.syncEngine.stop();
+      await flushLocalChanges();
       if (S.vaultKey) { await saveLegacy(S.db, S.state); await clearVault(S.db); S.vaultKey = null; } // вернуть в плейнтекст
-      if (S.syncEngine) { S.syncEngine.stop(); S.syncEngine.key = null; }
+      if (S.syncEngine) S.syncEngine.key = null;
       S.syncStatus = 'off';
       await clearSyncId(S.db);
       await clearSyncKey(S.db);
@@ -351,24 +356,19 @@ export async function renderSettings() {
       try {
         S.syncStatus = 'syncing'; updateSyncStatusUI();
         await withBusy(btn, () => S.syncEngine.unlock(sid, pass));   // Argon2 (~1с) + первая сверка с сервером
-        // «Запомнить на устройстве» — только БЕЗ замка: при замке K не должен лежать готовым.
-        if (!(await getLock(S.db))) await setSyncKey(S.db, { key: S.syncEngine.key, salt: S.syncEngine.salt });
-        S.vaultKey = S.syncEngine.key;             // включаем локальное шифрование тем же ключом
-        S.vaultSalt = S.syncEngine.salt;
-        const firstVault = !(await hasVault(S.db));
-        await saveVault(S.db, S.vaultKey, S.state);  // сейф всегда перешифрован ТЕКУЩИМ ключом
-        if (firstVault) await clearPlaintextStores(S.db); // первая настройка → плейнтекст убрать
-        S.syncEngine.start();                    // фоновый опрос
+        await S.syncEngine.start();
+        await S.syncEngine.pullAndApply();
         render();
       } catch (err) {
+        await S.syncEngine.stop();
         S.syncStatus = 'off';
         alert(err.message || 'Не удалось включить синхронизацию');
         render();
       }
     };
     if ($('#sync-off')) $('#sync-off').onclick = async () => {
-      S.syncEngine.stop();        // только остановить обмен; ключ и сейф оставляем —
-      S.syncStatus = 'off';       // локальные данные должны читаться без пароля (замок — Шаг 5)
+      try { await S.syncEngine.stop(); }
+      catch { alert('Обмен остановлен, но настройку не удалось сохранить. Повтори выключение перед перезапуском.'); }
       render();
     };
     if ($('#sync-pass')) $('#sync-pass').onclick = async () => {
@@ -378,22 +378,17 @@ export async function renderSettings() {
       const p2 = prompt('Повтори новый пароль:');
       if (p1 !== p2) { alert('Пароли не совпали.'); return; }
       try {
-        await S.syncEngine.changePassword(p1);                               // перешифровать + выложить
-        S.vaultKey = S.syncEngine.key;                                          // и пересохранить сейф новым ключом
-        if (await hasVault(S.db)) await saveVault(S.db, S.vaultKey, S.state);
+        const lock = await getLock(S.db);
+        if (!await S.syncEngine.changePassword(p1)) throw new Error('Синхронизация выключена');
         // При активном замке кэш-ключ НЕ восстанавливаем (иначе K снова лежит в готовом
         // виде и гейт обесценен), а биометрия заворачивает СТАРЫЙ ключ → сбрасываем её,
         // иначе на старте она развернёт ключ, которым сейф уже не открыть.
-        const lock = await getLock(S.db);
         if (lock) {
           const hadBio = !!lock.bio;
-          await setLock(S.db, { salt: lock.salt, bio: null });
-          await clearSyncKey(S.db); // старый кэш-ключ (если остался) больше не нужен и не должен лежать
           alert('Пароль синхронизации изменён ✓\n\nЗамок теперь открывается НОВЫМ паролем.'
             + (hadBio ? '\nFace/Touch ID сброшен (он был привязан к старому паролю) — включи заново: Настройки → «Выключить замок» → «Включить замок».' : '')
             + '\n\nНа ДРУГИХ устройствах синк покажет «не удалось расшифровать» — там нажми «Выключить» и снова «Включить» уже с новым паролем.');
         } else {
-          await setSyncKey(S.db, { key: S.syncEngine.key, salt: S.syncEngine.salt }); // запомнить новый ключ
           alert('Пароль синхронизации изменён ✓\n\nНа ДРУГИХ устройствах синк покажет «не удалось расшифровать» — там нажми «Выключить» и снова «Включить» уже с новым паролем.');
         }
         render();

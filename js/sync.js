@@ -55,9 +55,9 @@ export async function deriveChunkId(syncId, label) {
 }
 
 // --- REST: вызов RPC-функции PostgREST ---
-async function rpc(fn, body) {
+async function rpc(fn, body, signal) {
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/${fn}`, {
-    method: 'POST',
+    method: 'POST', signal,
     headers: {
       'apikey': SUPABASE_ANON,
       'Authorization': `Bearer ${SUPABASE_ANON}`,
@@ -70,17 +70,17 @@ async function rpc(fn, body) {
 }
 
 // Прочитать снимок по id. -> { salt, blob, version, updated_at } | null
-export async function pull(id) {
-  const rows = await rpc('sync_pull', { p_id: id });
+export async function pull(id, signal) {
+  const rows = await rpc('sync_pull', { p_id: id }, signal);
   return (rows && rows[0]) || null;
 }
 
 // Записать снимок с оптимистичной блокировкой по версии.
 // -> { ok:true, version } при успехе | { ok:false, version, salt, blob } при конфликте.
-export async function push(id, saltB64, blobB64, baseVersion) {
+export async function push(id, saltB64, blobB64, baseVersion, signal) {
   const rows = await rpc('sync_push', {
     p_id: id, p_salt: saltB64, p_blob: blobB64, p_base_version: baseVersion,
-  });
+  }, signal);
   return rows[0];
 }
 
@@ -94,166 +94,281 @@ export async function metaInit(id, saltB64) {
   return rpc('sync_meta_init', { p_id: id, p_salt: saltB64 }); // скаляр text
 }
 
-// --- движок: связывает синк с приложением через колбэки (без импорта app.js) ---
-// opts: {
-//   getStateJSON: () => string                 // текущее состояние -> JSON для шифрования
-//   applyStateJSON: async (json) => void        // принять удалённое состояние (импорт)
-//   getKeyfile: () => Uint8Array|undefined       // второй фактор
-//   onStatus: (status) => void                   // 'locked'|'syncing'|'synced'|'offline'|'conflict'|'error'
-// }
+// Отпечаток сравнивает содержимое, а не время экспорта или порядок ключей JSON.
+// Неизвестная база после обновления считается несинхронизированной: обе копии сохраняются.
+function stateText(json) {
+  const d = JSON.parse(json);
+  return JSON.stringify({
+    settings: d.settings, regulars: d.regulars || [], installments: d.installments || [],
+    records: (d.records || []).slice().sort((a, b) => a.period < b.period ? -1 : a.period > b.period ? 1 : 0),
+    history: d.history || [],
+  }, (_, value) => value && !Array.isArray(value) && typeof value === 'object'
+    ? Object.fromEntries(Object.keys(value).sort().map(k => [k, value[k]])) : value);
+}
+async function fingerprint(json) {
+  return b64.enc(await crypto.subtle.digest('SHA-256', teId.encode(stateText(json))));
+}
+
+// Долговечная база = версия сервера + отпечаток подтверждённого снимка.
+// Отличие сейфа от базы означает pending даже после аварийного перезапуска.
 export class SyncEngine {
   constructor(opts) {
     this.opts = opts;
-    this.id = null;           // сырой Sync ID (пользовательский локатор)
-    this.chunkId = null;      // id ячейки данных = SHA-256(SyncID‖"nagruzka:main")
-    this.metaId = null;       // id строки-меты = SHA-256(SyncID‖"meta")
-    this.key = null;          // сессионный CryptoKey (в памяти, не хранится)
-    this.salt = null;         // Uint8Array (канонная соль аккаунта, из меты)
-    this.version = 0;         // последняя известная версия сервера (по чанку)
-    this.pollMs = 5000;       // «почти realtime» опрос пока активна вкладка
-    this._timer = null;
-    this._pushTimer = null;
+    this.id = this.chunkId = this.metaId = this.key = this.salt = null;
+    this.journal = { version: 0, hash: null, conflict: null };
+    this.version = 0;
+    this.enabled = false;
+    this.pollMs = 5000;
+    this._generation = 0;
+    this._revision = 0;
+    this._queue = Promise.resolve();
   }
 
   status(s) { logEvent('SYNC_STATUS', { status: s }); this.opts.onStatus?.(s); }
+  get conflict() { return this.journal.conflict; }
+  _current(g) { return this.enabled && g === this._generation; }
 
-  // Вычислить локаторы (id чанка/меты) из сырого Sync ID. Зовётся в unlock и при
-  // восстановлении сохранённого ключа на старте (app.js), до любых сетевых вызовов.
   async prepare(syncId) {
     this.id = syncId;
     this.chunkId = await deriveChunkId(syncId, CHUNK_NAGRUZKA);
-    this.metaId  = await deriveChunkId(syncId, CHUNK_META);
+    this.metaId = await deriveChunkId(syncId, CHUNK_META);
+    this.journal = await this.opts.loadSyncState?.(this.chunkId)
+      || { version: 0, hash: null, conflict: null };
+    this.version = this.journal.version;
   }
 
-  // Разблокировка: один раз за сессию вводится пароль, деривируется ключ (Argon2 ~1c).
-  // Канонная соль берётся из строки-меты (одна на аккаунт). Если меты ещё нет —
-  // заводим её солью старого single-blob (тогда ключ не меняется) или новой случайной.
-  // Данные читаем из ЧАНКА; если чанка нет, но есть старый single-blob — МИГРИРУЕМ
-  // (расшифровать старый без AAD → записать как чанк с AAD). Старый блоб не трогаем.
-  async unlock(id, passphrase) {
-    await this.prepare(id);
-    const kf = this.opts.getKeyfile() || null;
+  async _storage(fn) {
+    try { return await fn(); }
+    catch (e) { e.syncStatus = 'storage-error'; throw e; }
+  }
+  async _network(fn) {
+    try { return await fn(); }
+    catch (e) { e.syncStatus = 'offline'; throw e; }
+  }
+  async _remember(journal, g) {
+    if (!this._current(g)) return false;
+    await this._storage(() => this.opts.saveSyncState?.(this.chunkId, journal));
+    if (!this._current(g)) return false;
+    this.journal = journal;
+    this.version = journal.version;
+    return true;
+  }
 
-    // 1. канонная соль аккаунта
+  // Единая очередь для push, pull, решения конфликта и смены пароля.
+  _run(fn, rethrow = false) {
+    const g = this._generation;
+    const task = this._queue.then(async () => {
+      if (!this._current(g) || !this.key) return false;
+      this._controller = new AbortController();
+      try {
+        await this._storage(() => this.opts.flushLocalChanges?.());
+        if (!this._current(g)) return false;
+        return await fn(g);
+      } catch (e) {
+        if (this._current(g)) this.status(e.syncStatus || 'error');
+        if (rethrow) throw e;
+        return false;
+      }
+    });
+    this._queue = task.catch(() => {});
+    return task;
+  }
+
+  async _settled(g, saved = false) {
+    await this._storage(() => this.opts.flushLocalChanges?.());
+    const json = this.opts.getStateJSON(), hash = await fingerprint(json);
+    if (!this._current(g)) return false;
+    if (this.conflict) { this.status('conflict'); return false; }
+    if (hash !== this.journal.hash || stateText(json) !== stateText(this.opts.getStateJSON())) {
+      this.status('pending'); this._schedulePush(); return false;
+    }
+    this.status('synced');
+    if (saved) this.opts.onSaved?.();
+    return true;
+  }
+
+  async _conflict(remote, g) {
+    if (await this._remember({ ...this.journal, conflict: remote }, g)) this.status('conflict');
+    return false;
+  }
+  _open(remote, key = this.key) {
+    return remote.legacy
+      ? openGCM(key, b64.dec(remote.blob))
+      : openChunk(key, b64.dec(remote.blob), this.chunkId);
+  }
+
+  async _receive(remote, g, chooseRemote = false) {
+    const json = await this._open(remote);
+    const remoteHash = await fingerprint(json);
+    const local = this.opts.getStateJSON(), revision = this._revision;
+    const localHash = await fingerprint(local);
+    if (!this._current(g)) return false;
+    const unchanged = () => this._current(g) && revision === this._revision
+      && stateText(local) === stateText(this.opts.getStateJSON());
+    if (!unchanged()) return this._conflict(remote, g);
+    if (localHash !== remoteHash) {
+      if (!chooseRemote && (localHash !== this.journal.hash || remote.version < this.version)) {
+        return this._conflict(remote, g);
+      }
+      const applied = await this._storage(() => this.opts.applyStateJSON(json, unchanged));
+      if (applied === false || !this._current(g)) return this._conflict(remote, g);
+    }
+    if (!await this._remember({ version: remote.version, hash: remoteHash, conflict: null }, g)) return false;
+    if (remote.legacy) return this._push(g);
+    return this._settled(g);
+  }
+
+  async _push(g, baseVersion = this.version, newKey = null, resolving = false) {
+    if (this.conflict && !resolving) { this.status('conflict'); return false; }
+    // Снимок и версия фиксируются вместе ДО шифрования и других await.
+    const json = this.opts.getStateJSON(), base = baseVersion;
+    this.status('syncing');
+    const hash = await fingerprint(json);
+    const blob = await sealGCM(newKey || this.key, json, AAD_MAIN);
+    if (!this._current(g)) return false;
+    const r = await this._network(() => push(this.chunkId, b64.enc(this.salt), b64.enc(blob), base, this._controller.signal));
+    if (!this._current(g)) return false;
+    if (!r.ok) {
+      const remoteJSON = await this._open(r); // чужой ключ не превращаем в якобы разрешимый конфликт
+      if (!newKey && stateText(remoteJSON) === stateText(this.opts.getStateJSON())) return this._receive(r, g);
+      return this._conflict(r, g);
+    }
+    if (newKey) {
+      // Локальный сейф и ключ сохраняются до следующей операции очереди.
+      await this._storage(() => this.opts.onKeyChanged?.(newKey, this.salt));
+      this.key = newKey;
+    }
+    if (!await this._remember({ version: r.version, hash, conflict: null }, g)) return false;
+    const settled = await this._settled(g, true);
+    return newKey ? true : settled;
+  }
+
+  pushNow() {
+    clearTimeout(this._pushTimer);
+    return this._run(g => this._push(g));
+  }
+  async _sync(g) {
+    if (this.conflict) { this.status('conflict'); return false; }
+    this.status('syncing');
+    let remote = await this._network(() => pull(this.chunkId, this._controller.signal));
+    if (!this._current(g)) return false;
+    if (!remote && this.version === 0) {
+      const legacy = await this._network(() => pull(this.id, this._controller.signal));
+      if (!this._current(g)) return false;
+      if (legacy) remote = { ...legacy, version: 0, legacy: true };
+    }
+    if (!remote) {
+      if (this.version) throw new Error('Серверная копия отсутствует');
+      return this._push(g);
+    }
+    if (remote.version !== this.version || !this.journal.hash || remote.legacy) return this._receive(remote, g);
+    if (await fingerprint(this.opts.getStateJSON()) !== this.journal.hash) return this._push(g);
+    return this._settled(g);
+  }
+  pullAndApply() { return this._run(g => this._sync(g)); }
+
+  // Проверяем временный ключ, не меняя рабочий ключ при неверном пароле.
+  // Применение снимка идёт отдельно после надёжного сохранения локального сейфа.
+  async unlock(id, passphrase) {
+    await this.stop();
+    await this._queue;
+    await this.prepare(id);
+    const g = this._generation;
     let saltB64 = await metaGet(this.metaId);
     let legacy = null;
     if (!saltB64) {
-      legacy = await pull(this.id);                       // старый single-blob (id = сырой Sync ID)
-      const seed = legacy ? legacy.salt : b64.enc(randomSalt());
-      saltB64 = await metaInit(this.metaId, seed);        // insert-once → фактически сохранённая
+      legacy = await pull(id);
+      saltB64 = await metaInit(this.metaId, legacy?.salt || b64.enc(randomSalt()));
     }
-    this.salt = b64.dec(saltB64);
-    this.key = await deriveKey(passphrase, kf, this.salt);
-
-    // 2. данные из чанка / миграция / первый push
-    const chunk = await pull(this.chunkId);
-    if (chunk) {
-      const json = await openChunk(this.key, b64.dec(chunk.blob), this.chunkId); // бросит при неверном пароле
-      this.version = chunk.version;
-      await this.opts.applyStateJSON(json);
-    } else {
-      if (legacy === null) legacy = await pull(this.id);  // могли не тянуть выше (мета уже была)
-      this.version = 0;
-      if (legacy) {
-        // соль меты = соль legacy → ключ совпадает; legacy зашифрован БЕЗ AAD
-        const json = await openGCM(this.key, b64.dec(legacy.blob)); // проверка пароля + миграция
-        await this.opts.applyStateJSON(json);
-      }
-      await this.pushNow();                                // создаём чанк (AAD = метка) из текущего состояния
+    const salt = b64.dec(saltB64);
+    const candidate = await deriveKey(passphrase, this.opts.getKeyfile?.() || null, salt);
+    const remote = await pull(this.chunkId);
+    if (remote) await this._open(remote, candidate);
+    else {
+      legacy ||= await pull(id);
+      if (legacy) await openGCM(candidate, b64.dec(legacy.blob));
+      // Если сервер пуст, пароль проверяет сохранённый сейф (при его наличии).
+      else await this.opts.verifyLocalKey?.(candidate);
     }
-    this.status('synced');
+    if (g !== this._generation) throw new Error('Включение синхронизации отменено');
+    let journal = this.journal;
+    if (this.conflict) {
+      // Конфликт мог быть сохранён до смены пароля на другом устройстве.
+      let json;
+      try { json = await this._open(this.conflict, candidate); }
+      catch { json = await this._open(this.conflict, this.key); }
+      const blob = await sealGCM(candidate, json, this.conflict.legacy ? undefined : AAD_MAIN);
+      journal = { ...journal, conflict: { ...this.conflict, blob: b64.enc(blob), salt: saltB64 } };
+    }
+    await this.opts.onKeyChanged?.(candidate, salt, { chunkId: this.chunkId, journal });
+    // Callback сохраняет сейф, ключ и журнал одной транзакцией.
+    this.journal = journal;
+    this.key = candidate; this.salt = salt;
   }
 
-  // Зашифровать текущее состояние и выгрузить (с разрешением конфликта).
-  async pushNow() {
-    if (!this.key) return;
-    this.status('syncing');
-    logEvent('SYNC_PUSH_STARTED', { version: this.version });
-    try {
-      const blob = await sealGCM(this.key, this.opts.getStateJSON(), AAD_MAIN);
-      const r = await push(this.chunkId, b64.enc(this.salt), b64.enc(blob), this.version);
-      if (r.ok) {
-        this.version = r.version;
-        logEvent('SYNC_PUSH_SUCCESS', { version: this.version });
-        this.status('synced');
-        this.opts.onSaved?.();   // правка сохранена и улетела на сервер — для зелёной плашки
-      } else {
-        // на сервере оказалось свежее: тянем и применяем, затем статус «конфликт»
-        logEvent('SYNC_CONFLICT', { version: r.version });
-        await this.pullAndApply();
-        this.status('conflict');
-      }
-    } catch (e) {
-      logEvent('SYNC_PUSH_FAILED', { errorName: e?.name || 'Error' });
-      this.status('offline');
-    }
+  changePassword(newPass) {
+    return this._run(async g => {
+      if (!await this._sync(g)) throw new Error('Сначала дождись синхронизации или разреши конфликт');
+      const newKey = await deriveKey(newPass, this.opts.getKeyfile?.() || null, this.salt);
+      if (!this._current(g)) throw new Error('Синхронизация выключена');
+      if (!await this._push(g, this.version, newKey)) throw new Error('Смена пароля не завершена');
+      return true;
+    }, true);
   }
 
-  // Проверить сервер и применить, если версия выше нашей.
-  async pullAndApply() {
-    if (!this.key) return;
-    let remote;
-    logEvent('SYNC_PULL_STARTED', { version: this.version });
-    try {
-      remote = await pull(this.chunkId);       // сеть
-    } catch (e) {
-      logEvent('SYNC_PULL_FAILED', { errorName: e?.name || 'Error' });
-      this.status('offline'); return;          // сервер реально недоступен
-    }
-    try {
-      if (remote && remote.version > this.version) {
-        const json = await openChunk(this.key, b64.dec(remote.blob), this.chunkId); // расшифровка
-        this.version = remote.version;
-        await this.opts.applyStateJSON(json);
-      }
-      logEvent('SYNC_PULL_SUCCESS', { version: this.version });
-      this.status('synced');                   // связь есть (применили или нечего)
-    } catch (e) {
-      logEvent('SYNC_APPLY_FAILED', { errorName: e?.name || 'Error' });
-      this.status('error');                    // не сервер, а пароль/keyfile
-    }
+  async getConflictCopies() {
+    const remote = this.conflict;
+    if (!remote) return null;
+    return { local: this.opts.getStateJSON(), remote: await this._open(remote), version: remote.version };
+  }
+  resolveConflict(choice) {
+    return this._run(async g => {
+      const remote = this.conflict;
+      if (!remote) return true;
+      if (choice === 'remote') return this._receive(remote, g, true);
+      if (choice !== 'local') throw new Error('Неизвестный вариант');
+      // Явный выбор локальной копии разрешает запись только поверх показанной версии.
+      return this._push(g, remote.version, null, true);
+    }, true);
   }
 
-  // Сменить пароль синка: перешифровать снимок новым ключом и выложить.
-  // Соль НЕ меняем (она канонная, в мете — иначе свежее устройство по мете вывело бы
-  // не тот ключ; смена пароля её менять не обязана). Новый ключ = Argon2(новыйПароль, та же соль).
-  async changePassword(newPass) {
-    if (!this.key) throw new Error('Синхронизация не активна');
-    const kf = this.opts.getKeyfile() || null;
-    const newKey = await deriveKey(newPass, kf, this.salt);
-    const blob = await sealGCM(newKey, this.opts.getStateJSON(), AAD_MAIN);
-    const r = await push(this.chunkId, b64.enc(this.salt), b64.enc(blob), this.version);
-    if (!r.ok) throw new Error('На сервере есть несинхронизированные изменения — подожди пару секунд и повтори');
-    this.key = newKey;
-    this.version = r.version;
-    this.status('synced');
-  }
-
-  // Дебаунс выгрузки после локальной правки.
-  notifyLocalChange() {
-    if (!this.key) return;
+  _schedulePush() {
+    if (!this.enabled || !this.key || this.conflict) return;
     clearTimeout(this._pushTimer);
     this._pushTimer = setTimeout(() => this.pushNow(), 1500);
   }
-
-  start() {
-    this.stop();
-    // мгновенная сверка при возврате в приложение (фокус/появление вкладки)
+  notifyLocalChange() {
+    this._revision++;
+    if (this.enabled) this.status(this.conflict ? 'conflict' : 'pending');
+    this._schedulePush();
+  }
+  async start() {
+    if (this.enabled) return;
+    const g = this._generation;
+    await this.opts.setEnabled?.(true);
+    if (g !== this._generation) return;
+    this.enabled = true;
+    this._generation++;
     this._onVisible = () => { if (document.visibilityState === 'visible') this.pullAndApply(); };
     document.addEventListener('visibilitychange', this._onVisible);
     window.addEventListener('focus', this._onVisible);
-    // плюс фоновый опрос, пока вкладка активна
-    this._timer = setInterval(() => {
-      if (document.visibilityState === 'visible') this.pullAndApply();
-    }, this.pollMs);
+    window.addEventListener('online', this._onVisible);
+    this._timer = setInterval(this._onVisible, this.pollMs);
+    this.status(this.conflict ? 'conflict' : 'pending');
   }
   stop() {
-    clearInterval(this._timer); this._timer = null;
+    this.enabled = false;
+    this._generation++;
+    this._controller?.abort();
+    clearInterval(this._timer); clearTimeout(this._pushTimer);
     if (this._onVisible) {
       document.removeEventListener('visibilitychange', this._onVisible);
       window.removeEventListener('focus', this._onVisible);
+      window.removeEventListener('online', this._onVisible);
       this._onVisible = null;
     }
+    this.status('off');
+    return this.opts.setEnabled?.(false);
   }
 }
 

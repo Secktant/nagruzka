@@ -2,12 +2,13 @@
 // SyncEngine с колбэками на S, включение замка (двухшаговая модалка, «свежий»
 // клик для WebAuthn) и стартовый гейт (биометрия → пароль-фолбэк).
 
-import { S, adoptStateJSON } from './store.js';
+import { S, adoptStateJSON, flushLocalChanges, useVaultKey } from './store.js';
 import { render } from './render.js';
-import { $, openModal, closeModal } from './dom.js';
+import { $, openModal, closeModal, esc, withBusy } from './dom.js';
 import { icon } from './icons.js';
-import { exportState, getKeyfile, setLock, clearSyncKey, hasVault, loadVault } from './db.js';
-import { deriveKeyRaw, importAesKey } from './crypto.js';
+import { exportState, getSyncKey, setLock, clearSyncKey, hasVault, loadVault,
+  getSyncState, setSyncState, setSyncEnabled } from './db.js';
+import { deriveKeyRaw, importAesKey, encryptTextWithKey } from './crypto.js';
 import { SyncEngine } from './sync.js';
 import { webauthnSupported, registerBiometric, unlockBiometric } from './lock.js';
 
@@ -17,26 +18,92 @@ export function updateSyncStatusUI() {
   const map = {
     off: ['—', ''], locked: ['🔒 заблокировано', 'off'],
     syncing: ['синхронизация…', 'on'], synced: ['✓ синхронизировано', 'on'],
-    offline: ['⚠ сервер недоступен', 'warn'], conflict: ['⚠ был конфликт, взято свежее', 'warn'],
-    error: ['⚠ ошибка', 'warn'],
+    pending: ['Ожидает отправки', 'warn'],
+    offline: ['⚠ сервер недоступен', 'warn'], conflict: ['⚠ выбери копию для синхронизации', 'warn'],
+    error: ['⚠ ошибка синхронизации', 'warn'],
+    'storage-error': ['⚠ не удалось сохранить на устройстве', 'warn'],
   };
   const [text, cls] = map[S.syncStatus] || ['—', ''];
   if (S.syncStatus === 'syncing') el.innerHTML = '<span class="mini-spin" aria-hidden="true"></span> синхронизация…';
   else el.textContent = text;
   el.className = 'keyfile-status ' + cls;
+  const conflictButton = $('#sync-conflict');
+  if (conflictButton) conflictButton.hidden = !S.syncEngine?.conflict;
 }
 
 export function createSyncEngine() {
   return new SyncEngine({
     getStateJSON: () => exportState(S.state),
-    applyStateJSON: async (json) => {
-      await adoptStateJSON(json);          // заменить состояние и сохранить (сейф/плейнтекст), без эха
-      render();
+    applyStateJSON: async (json, isCurrent) => {
+      const applied = await adoptStateJSON(json, isCurrent);
+      if (applied) render();
+      return applied;
     },
+    flushLocalChanges,
+    loadSyncState: (id) => getSyncState(S.db, id),
+    saveSyncState: (id, state) => setSyncState(S.db, id, state),
+    setEnabled: (enabled) => setSyncEnabled(S.db, enabled),
+    verifyLocalKey: async (key) => { if (await hasVault(S.db)) await loadVault(S.db, key); },
+    onKeyChanged: useVaultKey,
     getKeyfile: () => S.currentKeyfile || null,
     onStatus: (s) => { S.syncStatus = s; updateSyncStatusUI(); updateConnBanner(s); },
     onSaved: () => showToast('ok', '✓ Сохранено и синхронизировано', 2000), // на каждую правку
   });
+}
+
+export async function openSyncConflict() {
+  const engine = S.syncEngine;
+  try {
+    const copies = await engine.getConflictCopies();
+    if (!copies) return;
+    const summary = (json) => {
+      const data = JSON.parse(json);
+      return esc(`Платежей: ${data.records?.length || 0}, рассрочек: ${data.installments?.length || 0}, регулярных: ${data.regulars?.length || 0}`);
+    };
+    openModal(`<h3>Выбери копию данных</h3>
+      <p class="hint">На устройстве и на сервере разные данные. Обе копии сохранены, обмен приостановлен. Выбор заменит весь набор данных; платежи автоматически не объединяются.</p>
+      <p><b>На этом устройстве</b><br>${summary(copies.local)}</p>
+      <button class="btn" id="conflict-download-local">Скачать копию устройства</button>
+      <p><b>На сервере</b><br>${summary(copies.remote)}</p>
+      <button class="btn" id="conflict-download-remote">Скачать копию сервера</button>
+      <p class="hint">Файлы .nz открываются паролем синхронизации и keyfile, если он задан.</p>
+      <div class="lock-err" id="conflict-error"></div>
+      <div class="form-actions">
+        <button class="btn" id="conflict-later">Решить позже</button>
+        <button class="btn primary" id="conflict-local">Оставить копию устройства</button>
+        <button class="btn" id="conflict-remote">Взять копию сервера</button>
+      </div>`);
+    $('#conflict-later').onclick = closeModal;
+    for (const side of ['local', 'remote']) {
+      $('#conflict-download-' + side).onclick = async (e) => {
+        try {
+          await withBusy(e.currentTarget, async () => {
+            const bytes = await encryptTextWithKey(copies[side], engine.key, engine.salt, !!S.currentKeyfile);
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(new Blob([bytes], { type: 'application/octet-stream' }));
+            a.download = `nagruzka-conflict-${side}.nz`; a.click();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+          });
+        } catch (e) { $('#conflict-error').textContent = e.message; }
+      };
+      $('#conflict-' + side).onclick = async () => {
+        for (const button of ['#conflict-local', '#conflict-remote']) $(button).disabled = true;
+        try {
+          const resolved = await engine.resolveConflict(side);
+          if (!resolved && engine.conflict) {
+            await openSyncConflict();
+            $('#conflict-error').textContent = 'Выбор не завершён. Показаны актуальные копии — проверь их перед повторным выбором.';
+            return;
+          }
+          if (!resolved) throw new Error('Выбор ещё не завершён. Проверь связь и статус синхронизации; обе копии доступны до успешного сохранения.');
+          closeModal(); render();
+        } catch (e) {
+          $('#conflict-error').textContent = e.message;
+          for (const button of ['#conflict-local', '#conflict-remote']) $(button).disabled = false;
+        }
+      };
+    }
+  } catch (e) { alert(e.message); }
 }
 
 // Глобальная плашка связи: [точка][текст][×]. Зелёная/жёлтая авто-исчезают,
@@ -82,15 +149,17 @@ function dismissToast(kind) {
   }
 }
 export function updateConnBanner(s) {
-  if (s === 'syncing') return;                       // транзиентное — не трогаем плашку
+  if (s === 'syncing') return;
   if (s === 'off' || s === 'locked') { hideToast(); prevConn = null; return; }
-  if (s === 'conflict') { showToast('warn', 'Был конфликт — взято свежее', 3000); return; }
+  if (s === 'pending') { showToast('warn', 'Изменения ожидают синхронизации', 0); prevConn = 'pending'; return; }
+  if (s === 'conflict') { showToast('bad', 'Две копии данных — выбери нужную в Настройках → Синхронизация', 0); prevConn = 'conflict'; return; }
   if (s === 'synced') {
     if (prevConn !== 'synced') showToast('ok', 'Соединение установлено', 2500); // первый раз / после сбоя
     prevConn = 'synced'; return;
   }
   if (s === 'offline') { showToast('bad', 'Синхронизация приостановлена', 0); prevConn = 'offline'; return; }
-  if (s === 'error')   { showToast('bad', 'Не удалось расшифровать — проверь пароль/keyfile', 0); prevConn = 'error'; return; }
+  if (s === 'error')   { showToast('bad', 'Ошибка синхронизации — проверь пароль/keyfile и повтори подключение', 0); prevConn = 'error'; return; }
+  if (s === 'storage-error') { showToast('bad', 'Не удалось сохранить данные на устройстве. Не закрывай приложение; освободи место и повтори сохранение.', 0); prevConn = 'storage-error'; }
 }
 
 // Включение замка (Шаг 5): двухшаговая модалка. Шаг 1 — пароль в поле окна (не системный

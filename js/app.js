@@ -6,7 +6,7 @@ import { SEED } from './seed.js';
 import {
   initStore, loadState,
   saveVault, loadVault, hasVault, clearPlaintextStores,
-  getKeyfile, getSyncId, getSyncKey, getLock,
+  getKeyfile, getSyncId, getSyncKey, getLock, getSyncEnabled,
 } from './db.js';
 import { render } from './render.js';
 import { renderPeriods, isYearView } from './views/periods.js';
@@ -71,10 +71,10 @@ async function main() {
       await S.syncEngine.prepare(sid);   // вычислить id чанка/меты из Sync ID
       S.syncEngine.key = S.vaultKey;
       S.syncEngine.salt = S.vaultSalt;
-      S.syncEngine.version = 0;      // подтянем актуальную версию из сервера ниже
-      S.syncStatus = 'synced';
-      S.syncEngine.start();
-      S.syncEngine.pullAndApply();
+      if (await getSyncEnabled(S.db) !== false) {
+        await S.syncEngine.start();
+        S.syncEngine.pullAndApply();
+      }
     }
   }
   $('#prev-month').addEventListener('click', () => periodsNav(-1));

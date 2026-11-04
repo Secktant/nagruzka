@@ -13,7 +13,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  group: ${{ github.event_name == 'workflow_dispatch' && 'pages' || format('ci-{0}', github.ref) }}
   cancel-in-progress: false
 
 jobs:
@@ -54,12 +54,14 @@ jobs:
         run: node tools/check-assets.mjs
       - name: Boot-smoke в реальном браузере
         run: node tools/smoke.mjs
+      - name: Сохранность синхронизации (IndexedDB, офлайн, конфликт)
+        run: npm run smoke:sync
 
   deploy:
     name: Публикация на GitHub Pages
     needs: ci
-    # деплоим только при пуше в main; на PR и других ветках гоняется лишь ci
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # Публикация выбранной ветки — по поручению; push/PR запускают только проверки.
+    if: github.event_name == 'workflow_dispatch' && github.ref_type == 'branch'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
