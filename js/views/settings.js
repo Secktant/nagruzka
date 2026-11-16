@@ -33,6 +33,15 @@ function resetFileInput(input) {
   if (input) input.value = '';
 }
 
+async function myBackupFilename(sid) {
+  const chunkId = await deriveChunkId(sid, CHUNK_NAGRUZKA);
+  // Имя снимка должно совпадать с backup_id в SQL-экспорте архива.
+  const bytes = new TextEncoder().encode('nagruzka-backup:' + chunkId);
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  const backupId = Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join('');
+  return `${backupId}.nz`;
+}
+
 export async function renderSettings() {
   const kf = await getKeyfile(S.db); // Uint8Array | undefined
   const sid = await getSyncId(S.db); // base64url-строка | undefined
@@ -128,6 +137,11 @@ export async function renderSettings() {
           : `<button class="btn" id="sid-create">Создать Sync ID</button>`}
         <button class="btn" id="sid-paste">Вставить Sync ID</button>
       </div>
+      ${sid && isValidSyncId(sid) ? `
+        <div class="form-actions" style="justify-content:flex-start;margin-top:8px">
+          <button class="btn" id="backup-copy" disabled>${icon('copy')} Скопировать имя бэкапа</button>
+        </div>
+        <p class="hint">Файл можно найти в архиве после первого бэкапа этого набора. Если доступ к архиву есть только у владельца, передай ему имя файла.</p>` : ''}
 
       <div class="form-actions" style="justify-content:flex-start;margin-top:10px">
         ${S.syncEngine?.enabled
@@ -318,6 +332,21 @@ export async function renderSettings() {
       try { await navigator.clipboard.writeText(sid); alert('Sync ID скопирован ✓'); }
       catch { const i = $('#sid-show'); i.focus(); i.select(); document.execCommand('copy'); alert('Sync ID выделен — Cmd/долгий тап → Копировать'); }
     };
+    const backupCopy = $('#backup-copy');
+    if (backupCopy) {
+      // Имя готово до клика, чтобы Safari разрешил запись в буфер обмена.
+      myBackupFilename(sid).then(filename => {
+        backupCopy.onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(filename);
+            alert('Имя файла бэкапа скопировано ✓');
+          } catch {
+            prompt('Скопируй имя файла бэкапа:', filename);
+          }
+        };
+        backupCopy.disabled = false;
+      }).catch(() => { backupCopy.textContent = 'Имя бэкапа недоступно'; });
+    }
     if ($('#sid-paste')) $('#sid-paste').onclick = async () => {
       const txt = (prompt('Вставь Sync ID со второго устройства:') || '').trim();
       if (!txt) return;
