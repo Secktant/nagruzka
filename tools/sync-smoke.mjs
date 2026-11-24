@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, resolve } from 'node:path';
 import { chromium } from 'playwright';
+import { launchOptions, traceStart, traceFinish } from './browser-trace.mjs';
 
 const ROOT = process.cwd();
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
@@ -31,6 +32,7 @@ const state = id => ({
   records: [{ id, name: id, period: '2026-11-15', amount: 100, paid: false, bank: 'Тестовый банк' }],
 });
 let browser;
+let passed = false;
 const pageErrors = [];
 
 async function attach(page) {
@@ -43,6 +45,7 @@ async function attach(page) {
 }
 async function device(id = 'base') {
   const context = await browser.newContext({ serviceWorkers: 'block', acceptDownloads: true });
+  await traceStart(context);
   const d = { context, offline: false, calls: [] }; devices.push(d);
   await context.route('**/*', async route => {
     const request = route.request(), url = new URL(request.url());
@@ -129,7 +132,7 @@ async function downloadCopy(d, side) {
 }
 
 try {
-  browser = await chromium.launch();
+  browser = await chromium.launch(launchOptions());
   const a = await device();
   await assertConflictButtonHidden(a);
   a.offline = true; await edit(a, 'offline-edit'); await push(a);
@@ -261,8 +264,12 @@ try {
   assert.equal(await status(a), 'synced'); assert.equal(await remoteId(a), 'edited-during-import');
   console.log('✓ password change persists vault/key atomically and survives reload');
   assert.deepEqual(pageErrors, [], 'uncaught page errors');
+  passed = true;
 } finally {
-  for (const d of devices) await d.context.close().catch(() => {});
+  for (const [i, d] of devices.entries()) {
+    await traceFinish(d.context, 'sync-device-' + i, !passed);
+    await d.context.close();
+  }
   await browser?.close();
   await new Promise(resolve => server.close(resolve));
 }

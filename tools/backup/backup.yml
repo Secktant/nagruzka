@@ -1,0 +1,44 @@
+# Установить в nagruzka-backup/.github/workflows/backup.yml, заменив прежний workflow.
+name: backup
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch: {}
+permissions:
+  contents: write
+concurrency:
+  group: backup
+  cancel-in-progress: false
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Pull all encrypted snapshots
+        env:
+          SUPABASE_URL: https://zyeekhsypncvosxfhbnm.supabase.co
+          SUPABASE_ANON: sb_publishable_gvoGBsxLCglzp48NAsgB2w_-pEThW4K
+          BACKUP_TOKEN: ${{ secrets.BACKUP_TOKEN }}
+        run: node tools/backup.mjs
+      - name: Commit snapshots if changed
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name backup-bot
+          git config user.email backup-bot@users.noreply.github.com
+          git add -- backups/index.json
+          for directory in backups/snapshots backups/rejected; do
+            if [ -d "$directory" ]; then
+              git add -- "$directory"
+            fi
+          done
+          if git diff --cached --quiet; then
+            echo 'Проверены все снимки, изменений нет.'
+            exit 0
+          fi
+          git commit -m "backup $(date -u +%Y-%m-%d) (all snapshots)"
+          git push

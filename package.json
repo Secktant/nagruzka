@@ -7,7 +7,8 @@
     "check:assets": "node tools/check-assets.mjs",
     "smoke": "node tools/smoke.mjs",
     "smoke:sync": "node tools/sync-smoke.mjs",
-    "ci": "npm test && npm run check:assets && npm run smoke && npm run smoke:sync"
+    "smoke:release": "node tools/release-smoke.mjs",
+    "ci": "npm test && npm run check:assets && npm run smoke && npm run smoke:sync && npm run smoke:release"
   },
   "devDependencies": {
     "playwright": "^1.49.0"
