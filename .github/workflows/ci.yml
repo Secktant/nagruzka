@@ -74,6 +74,8 @@ jobs:
         run: node tools/smoke.mjs
       - name: Сохранность синхронизации (IndexedDB, офлайн, конфликт)
         run: npm run smoke:sync
+      - name: Долги и сохранение слотов рассрочек
+        run: npm run smoke:debt
 
       - name: Обновление PWA и восстановление бэкапа
         run: npm run smoke:release

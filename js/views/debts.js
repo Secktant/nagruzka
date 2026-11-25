@@ -3,7 +3,7 @@
 // Черновой пересчёт расписания идёт по draft-состоянию (buildTimeline), в базу
 // пишется только по «Сохранить».
 
-import { S, recalc, putInstallment, deleteInstallment, deleteRecord, logChange, diffFields } from '../store.js';
+import { S, recalc, putInstallment, deleteInstallment, logChange, diffFields } from '../store.js';
 import { render } from '../render.js';
 import { $, $$, esc, uid, parseMoney, fmtNumEditor, moneyInput, openModal, closeModal } from '../dom.js';
 import { bankChipsHTML, wireBankChips, selectedBank } from '../chips.js';
@@ -213,6 +213,7 @@ function openDebtForm(instId) {
   // пропусков копятся в памяти и применяются только по «Сохранить». «Отмена» — откат.
   // paid-строки неизменны (только показ); неоплаченные — редактируемы.
   let draftRows = isNew ? null : payRows.map(p => ({
+    id: p.virtual ? null : p.id,
     paid: !!p.paid,
     period: p.period,
     amount: p.amount,
@@ -574,11 +575,22 @@ function openDebtForm(instId) {
     });
   }
 
-  // Черновик существующей рассрочки → S.state для расчёта ленты (как при «Сохранить»):
-  // убираем неоплаченные записи этой рассрочки, хвост берём из draftRows (план).
+  // Один черновик для предпросмотра и сохранения; оплаченные записи неизменны.
   function draftStateFor() {
     const records = S.state.records.filter(r => !(r.installmentId === inst.id && !r.paid));
-    const plan = draftRows.filter(r => !r.paid && r.amount > 0).map(r => ({ period: r.period, amount: r.amount }));
+    const paidPeriods = new Set(records.filter(r => r.installmentId === inst.id && r.paid).map(r => r.period));
+    const plan = [];
+    for (const r of draftRows.filter(r => !r.paid && r.amount > 0)) {
+      if (paidPeriods.has(r.period)) {
+        // Запись на дате оплаты подавляет весь plan: остаток сохраняем записью.
+        const previous = S.state.records.find(x => x.id === r.id);
+        records.push({ ...previous, id: r.id || uid('p'), installmentId: inst.id,
+          period: r.period, kind: 'expense', name: form.name.value.trim() || inst.name,
+          amount: r.amount, bank: selectedBank(), paid: false });
+      } else plan.push({ period: r.period, amount: r.amount });
+    }
+    records.sort((a, b) => a.period < b.period ? -1 : a.period > b.period ? 1 : 0);
+    plan.sort((a, b) => a.period < b.period ? -1 : a.period > b.period ? 1 : 0);
     const draftInst = {
       ...inst, plan,
       total: parseMoney(form.total.value) || inst.total,
@@ -738,14 +750,12 @@ function openDebtForm(instId) {
       } else if (paidSum + planSum > total + 0.5) {
         if (!confirm(`Платежи (${fmtMoney(paidSum + planSum)}) больше общей суммы (${fmtMoney(total)}) на ${fmtMoney(paidSum + planSum - total)} — это переплата.\n\nСохранить как есть?`)) return;
       }
-      // выбрасываем прежние неоплаченные записи рассрочки — их роль теперь играет plan
-      const dropIds = S.state.records.filter(r => r.installmentId === inst.id && !r.paid).map(r => r.id);
-      S.state.records = S.state.records.filter(r => !dropIds.includes(r.id));
-      for (const id of dropIds) await deleteRecord(S.db, id);
-      // Пересборку расписания не расписываем построчно — dropIds это техника, а не
-      // намерение. В логе одно событие: что стало с суммой, банком и числом платежей.
-      const next = { name, perPeriod: per || inst.perPeriod, bank: selectedBank(), total, plan, endPeriod: form.endPeriod?.value || null };
-      const d = diffFields({ ...inst, count: inst.plan?.length ?? 0 }, { ...next, count: plan.length },
+      const draft = draftStateFor();
+      S.state.records = draft.records;
+      // В логе одно событие: сумма, банк и число платежей; сохраняем полный снимок.
+      const next = { name, perPeriod: per || inst.perPeriod, bank: selectedBank(), total,
+        plan: draft.installments.find(i => i.id === inst.id).plan, endPeriod: form.endPeriod?.value || null };
+      const d = diffFields({ ...inst, endPeriod: inst.endPeriod || null, count: payRows.filter(r => !r.paid).length }, { ...next, count: plan.length },
         ['name', 'total', 'bank', 'endPeriod', 'count']);
       Object.assign(inst, next);
       if (d) logChange('installment', 'edit', inst, d);
