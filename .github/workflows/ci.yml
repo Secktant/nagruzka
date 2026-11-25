@@ -138,6 +138,9 @@ jobs:
       - uses: actions/upload-pages-artifact@v3
         with:
           path: ${{ runner.temp }}/site
+      # Pages listArtifacts может ещё не видеть только что загруженный артефакт.
+      - name: Дождаться индексации Pages-артефакта
+        run: sleep 10
       - id: deployment
         uses: actions/deploy-pages@v4
       - uses: actions/upload-artifact@v4
