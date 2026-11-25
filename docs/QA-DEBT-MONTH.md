@@ -5,7 +5,8 @@ CACHE **1.12.8**, ветка `fix/debt-month-candidate`. Подтверждён�
 **c861f8f47c41f8d21d4aafde2b912751eb0364e2**, опубликованная 1.12.6.
 Последующие изменения отчёта не меняют приложение, тесты и workflow.
 
-Среда: Node, изолированный Google Chrome (`PLAYWRIGHT_CHANNEL=chrome`),
+Среда: Node 26.0.0, Playwright 1.62.1, изолированный Chrome 158.0.8127.38
+(`PLAYWRIGHT_CHANNEL=chrome`),
 desktop 1280, mobile 390/touch, UTC и Europe/Samara. Данные, RPC и пароли
 синтетические; IndexedDB, service worker, AES-GCM и Argon2 настоящие.
 Боевой Supabase и личные профили не использовались.
@@ -19,9 +20,9 @@ desktop 1280, mobile 390/touch, UTC и Europe/Samara. Данные, RPC и па�
 - Дополнительный реальный UI: доходы/банки/оплата, регулярные/история,
   автоплан, замок через интерфейс с keyfile, отказ/отмена восстановления,
   мобильные формы/навигация — exit 0.
-- Временные свидетельства QA: `/tmp/nagruzka-qa-64ccca9-extra.mjs` и
-  `/tmp/nagruzka-qa-64ccca9-security-browser.log`; имя первого скрипта историческое,
-  итоговый прогон выполнен на **04a258a**, SHA и неизменность исходников проверены.
+- Свидетельства итогового QA: `/tmp/nagruzka-qa-04a258a-extra.mjs`,
+  `/tmp/nagruzka-qa-04a258a-ci.log`, `/tmp/nagruzka-qa-04a258a-extra.log`,
+  `/tmp/nagruzka-qa-04a258a-security-node.log`; SHA и неизменность исходников проверены.
 - Security повторно подтвердил отказ транзакции, целостность прежнего сейфа,
   запрет отправки и повтор одним AES-снимком. Форматы и криптография не менялись.
 
