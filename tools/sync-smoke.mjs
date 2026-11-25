@@ -68,6 +68,10 @@ async function device(id = 'base') {
         const row = { salt: body.p_salt, blob: body.p_blob, version: version + 1,
           updated_at: new Date().toISOString() };
         rows.set(body.p_id, row); result = [{ ok: true, version: row.version }];
+        if (d.dropPushReply) {
+          d.dropPushReply = false;
+          await route.abort('internetdisconnected'); return;
+        }
       }
     } else throw new Error('Unexpected RPC: ' + fn);
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(result) });
@@ -263,6 +267,103 @@ try {
   await reload(a); await sync(a);
   assert.equal(await status(a), 'synced'); assert.equal(await remoteId(a), 'edited-during-import');
   console.log('✓ password change persists vault/key atomically and survives reload');
+
+  // Abort an actual IndexedDB transaction after put queued a request. Its request
+  // error can bubble while transaction.error is still null: flush must still fail.
+  await a.page.clock.setFixedTime(new Date('2026-06-10T10:00:00+04:00'));
+  await a.page.setViewportSize({ width: 800, height: 1000 });
+  await a.page.evaluate(async () => {
+    qa.S.state = {
+      settings: { startPeriod: '2026-01-15', banks: ['Тестовый банк'] }, regulars: [], history: [],
+      installments: [{ id: 'same-date', name: 'Synthetic same-date', total: 9000,
+        firstPeriod: '2026-07-15', perPeriod: 3000, bank: 'Тестовый банк', createdMonth: '2026-06',
+        endPeriod: null, plan: [{ period: '2026-08-15', amount: 4000 }] }],
+      records: [
+        { id: 'paid-slot', installmentId: 'same-date', kind: 'expense', name: 'Synthetic same-date',
+          period: '2026-07-15', amount: 2000, bank: 'Тестовый банк', paid: true },
+        { id: 'unpaid-slot', installmentId: 'same-date', kind: 'expense', name: 'Synthetic same-date',
+          period: '2026-07-15', amount: 3000, bank: 'Тестовый банк', paid: false },
+      ],
+    };
+    await qa.saveAll(); await qa.S.syncEngine.pushNow();
+    qa.S.view.tab = 'debts'; (await import('/js/render.js')).render();
+    qa.savedCount = qa.vaultWrites = 0; qa.failVault = false;
+    const onSaved = qa.S.syncEngine.opts.onSaved;
+    qa.S.syncEngine.opts.onSaved = () => { qa.savedCount++; onSaved?.(); };
+    qa.originalPut = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function(value, key) {
+      const request = qa.originalPut.apply(this, arguments);
+      if (this.name === 'kv' && key === 'vault') {
+        qa.vaultWrites++;
+        if (qa.failVault) queueMicrotask(() => this.transaction.abort());
+      }
+      return request;
+    };
+  });
+  const debtForm = async () => {
+    await a.page.locator('[data-debt="same-date"]').click();
+    await a.page.locator('#debt-form [name=total]').fill('9500');
+    await a.page.locator('[data-row-amount]:not([disabled])').first().fill('3500');
+  };
+  const debtValues = source => a.page.evaluate(async source => {
+    const state = source === 'vault' ? await qa.db.loadVault(qa.S.db, qa.S.vaultKey) : qa.S.state;
+    const engine = await import('/js/engine.js');
+    const summary = engine.installmentSummaries(state, engine.buildTimeline(state, '2026-12-31'))[0];
+    return { total: state.installments[0].total, month: state.installments[0].createdMonth,
+      records: state.records.map(r => [r.id, r.amount, r.paid]), plan: state.installments[0].plan,
+      remaining: summary.remaining };
+  }, source);
+  const oldDebt = { total: 9000, month: '2026-06',
+    records: [['paid-slot', 2000, true], ['unpaid-slot', 3000, false]],
+    plan: [{ period: '2026-08-15', amount: 4000 }], remaining: 7000 };
+  const editedDebt = { ...oldDebt, total: 9500,
+    records: [['paid-slot', 2000, true], ['unpaid-slot', 3500, false]], remaining: 7500 };
+  try {
+    const beforeCancel = await a.page.evaluate(() => JSON.stringify(qa.S.state));
+    await debtForm(); await a.page.locator('#modal-cancel').click();
+    assert.equal(await a.page.evaluate(() => JSON.stringify(qa.S.state)), beforeCancel);
+    assert.equal(await a.page.evaluate(() => qa.vaultWrites), 0, 'cancel must not persist a draft');
+    await debtForm(); await a.page.evaluate(() => { qa.failVault = true; });
+    const beforeCalls = a.calls.length;
+    const rejectedSave = a.page.waitForEvent('pageerror');
+    const errorIndex = pageErrors.length;
+    await a.page.locator('#debt-form button.primary').click();
+    assert.match((await rejectedSave).message, /abort|отмен/i);
+    await a.page.waitForFunction(() => qa.S.syncStatus === 'storage-error');
+    assert.equal(await a.page.locator('#debt-form').isVisible(), true, 'failed save keeps the form open');
+    assert.equal(await a.page.evaluate(() => qa.flushLocalChanges().then(() => false, () => true)), true, 'flush must reject an aborted write');
+    assert.equal(await push(a), false);
+    assert.equal(a.calls.length, beforeCalls, 'failed local save must block all RPC');
+    assert.equal(await a.page.evaluate(() => qa.savedCount), 0, 'no saved-success notification');
+    assert.equal(await status(a), 'storage-error');
+    assert.equal(await a.page.evaluate(() => qa.vaultWrites), 1, 'one attempted complete snapshot');
+    assert.deepEqual(await debtValues('vault'), oldDebt);
+    assert.deepEqual(await debtValues('memory'), editedDebt);
+    assert.equal(pageErrors.splice(errorIndex).length, 1, 'only the deliberately rejected save');
+    await a.page.evaluate(() => { qa.failVault = false; qa.vaultWrites = 0; });
+    await a.page.locator('#debt-form button.primary').click();
+    await a.page.waitForSelector('#debt-form', { state: 'hidden' });
+    await a.page.evaluate(() => qa.flushLocalChanges());
+    assert.equal(await a.page.evaluate(() => qa.vaultWrites), 1, 'retry persists a single full snapshot');
+    assert.deepEqual(await debtValues('vault'), editedDebt);
+    a.dropPushReply = true;
+    assert.equal(await push(a), false); assert.equal(await status(a), 'offline');
+    await reload(a); await sync(a);
+    assert.equal(await status(a), 'synced');
+    assert.equal(await a.page.evaluate(() => qa.S.syncEngine.conflict), null);
+    assert.deepEqual(await debtValues('memory'), editedDebt);
+    assert.deepEqual(await debtValues('vault'), editedDebt);
+    const chunk = await a.page.evaluate(() => qa.S.syncEngine.chunkId);
+    const remote = await a.page.evaluate(async row => JSON.parse(await qa.crypto.openGCM(
+      qa.S.vaultKey, qa.crypto.b64.dec(row.blob), qa.sync.AAD_MAIN)), rows.get(chunk));
+    assert.deepEqual(remote.records.map(r => [r.id, r.amount, r.paid]), editedDebt.records);
+    assert.equal(new Set(remote.records.map(r => r.id)).size, 2);
+    assert.equal(remote.installments[0].createdMonth, '2026-06');
+    assert.equal(remote.installments[0].total, 9500);
+    console.log('✓ real IDB abort blocks flush/RPC/success; cancel writes nothing; retry saves one full snapshot; lost accepted reply + reload preserves each paid/unpaid ID once and June/remaining 7500');
+  } finally {
+    await a.page.evaluate(() => { if (qa.originalPut) IDBObjectStore.prototype.put = qa.originalPut; });
+  }
   assert.deepEqual(pageErrors, [], 'uncaught page errors');
   passed = true;
 } finally {
