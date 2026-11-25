@@ -373,7 +373,7 @@ function monthBandHTML(days) {
       ${ah.sum > 0
     ? `<div class="chips mb-chips">${bankChips(ah.perBank)}</div>
          <div class="mb-note">${parts.join(' · ')} · Всего <b>${fmtMoney(ah.sum)}</b></div>`
-    : `<div class="mb-note">Долгов впереди нет — рассрочки закрыты, разовых не запланировано.</div>`}
+    : `<div class="mb-note">На этот месяц долгов впереди нет.</div>`}
     </div>`;
 
   return `
@@ -716,7 +716,8 @@ export function openPaymentForm(period, key) {
       return;
     }
     if (isNew) {
-      const rec = { id: uid('p'), period, kind: 'expense', name, amount, bank, paid: false };
+      const rec = { id: uid('p'), period, kind: 'expense', name, amount, bank, paid: false,
+        createdMonth: todayISO(new Date()).slice(0, 7) };
       S.state.records.push(rec);
       S.state.records.sort((a, b) => a.period < b.period ? -1 : 1);
       logChange('record', 'create', rec, { now: { amount, bank } });

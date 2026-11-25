@@ -224,6 +224,17 @@ export function buildTimeline(state, endISO) {
   return timeline;
 }
 
+// Месяц события создания — в той же локальной зоне, что и экран истории.
+export function createdMonthFromHistory(state, entity, id) {
+  const times = (Array.isArray(state.history) ? state.history : [])
+    .filter(h => h?.e === entity && h.id === id && h.act === 'create'
+      && typeof h.t === 'number' && Number.isFinite(new Date(h.t).getTime()))
+    .map(h => h.t);
+  if (!times.length) return null;
+  const date = new Date(times.reduce((first, t) => Math.min(first, t), Infinity));
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
 // Обязательства ВНЕ показанного месяца: что просрочено слева и что осталось справа.
 // from/to — первый и последний период месяца (даты, а не ym: разбирать строки не надо).
 //
@@ -232,7 +243,7 @@ export function buildTimeline(state, endISO) {
 // «Мне должны» (amount < 0) тоже мимо — это приход, а не обязательство.
 //
 // Границы подобраны так, чтобы три числа НЕ пересекались и складывались в весь
-// долг: просрочено (< from) + месяц (from..to) + впереди (> to). Для рассрочки
+// известный долг: просрочено (< from) + месяц (from..to) + впереди (> to). Для рассрочки
 // «впереди» = остаток долга МИНУС всё её неоплаченное до конца месяца — тогда
 // недорасписанная рассрочка (расписанием закрыто меньше долга) не занижает итог.
 // Просрочка меряется от СЕГОДНЯ, а не от просматриваемого месяца: открыв сентябрь,
@@ -242,6 +253,7 @@ export function buildTimeline(state, endISO) {
 // и в «просрочено», и в «внести за месяц» на одном экране.
 export function outstanding(state, timeline, from, to, today) {
   const cutoff = today && today < from ? today : from;
+  const month = to.slice(0, 7);
   const add = (acc, bank, amount) => {
     acc.count++; acc.sum += amount;
     const key = bank || '';
@@ -262,7 +274,8 @@ export function outstanding(state, timeline, from, to, today) {
         if (p.installmentId) instBefore.set(p.installmentId, (instBefore.get(p.installmentId) || 0) + p.amount);
       } else if (day.period <= to) {
         if (p.installmentId) instBefore.set(p.installmentId, (instBefore.get(p.installmentId) || 0) + p.amount);
-      } else if (!p.installmentId) {
+      } else if (!p.installmentId && (p.createdMonth
+        || createdMonthFromHistory(state, 'record', p.id) || day.period.slice(0, 7)) <= month) {
         add(once, p.bank, p.amount);   // рассрочки берём остатком долга ниже, а не платежами
       }
     }
@@ -270,6 +283,13 @@ export function outstanding(state, timeline, from, to, today) {
 
   for (const s of installmentSummaries(state, timeline)) {
     if (s.closed) continue;
+    // Без месяца добавления и события создания берём самое раннее начало платежей.
+    const first = [s.inst.firstPeriod, ...(s.inst.plan || []).map(p => p.period),
+      ...state.records.filter(r => r.installmentId === s.inst.id).map(r => r.period)]
+      .filter(Boolean).sort()[0];
+    const createdMonth = s.inst.createdMonth
+      || createdMonthFromHistory(state, 'installment', s.inst.id) || first?.slice(0, 7);
+    if (createdMonth && createdMonth > month) continue;
     const ahead = Math.max(0, Math.round(s.remaining - (instBefore.get(s.inst.id) || 0)));
     if (ahead > 0) add(inst, s.inst.bank, ahead);
   }

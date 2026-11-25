@@ -8,6 +8,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
 import { chromium } from 'playwright';
+import { launchOptions, traceStart, traceFinish } from './browser-trace.mjs';
 
 const ROOT = process.cwd();
 const PORT = 8137;
@@ -35,9 +36,11 @@ const fail = (msg) => { console.error('✖ SMOKE FAIL: ' + msg); };
 const errors = [];
 let exitCode = 0;
 
-const browser = await chromium.launch();
+const browser = await chromium.launch(launchOptions());
+const context = await browser.newContext();
 try {
-  const page = await browser.newPage();
+  await traceStart(context);
+  const page = await context.newPage();
   page.on('console', (m) => { if (m.type() === 'error') errors.push('console.error: ' + m.text()); });
   page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 
@@ -80,6 +83,7 @@ try {
     }
   }
 
+  if (process.env.TRACE_PROBE === 'boot') throw new Error('Controlled trace probe after navigation');
   if (errors.length) { exitCode = 1; fail('ошибки в консоли:\n   ' + errors.join('\n   ')); }
   else console.log('✓ smoke: приложение стартует, все 4 вкладки рендерятся, ошибок консоли нет');
 } catch (e) {
@@ -87,6 +91,7 @@ try {
   fail(e.message);
   if (errors.length) console.error('   консоль:\n   ' + errors.join('\n   '));
 } finally {
+  await traceFinish(context, 'boot', Boolean(exitCode));
   await browser.close();
   server.close();
 }

@@ -20,6 +20,7 @@ import {
   fmtPeriod,
   fmtMonth,
   outstanding,
+  createdMonthFromHistory,
   regularShares,
 } from '../js/engine.js';
 
@@ -469,7 +470,7 @@ describe('outstanding — просрочено слева, осталось сп
     const s = base();
     s.records = [
       { id: 'a', period: '2026-01-15', kind: 'expense', name: 'Старое', amount: 5000, bank: 'Озон', paid: false },
-      { id: 'b', period: '2026-03-15', kind: 'expense', name: 'Будущее', amount: 7000, bank: 'Тбанк', paid: false },
+      { id: 'b', period: '2026-03-15', createdMonth: '2026-02', kind: 'expense', name: 'Будущее', amount: 7000, bank: 'Тбанк', paid: false },
       { id: 'c', period: '2026-02-15', kind: 'expense', name: 'Этот месяц', amount: 9000, bank: 'Озон', paid: false },
     ];
     const r = calc(s);
@@ -493,7 +494,7 @@ describe('outstanding — просрочено слева, осталось сп
 
   test('платёж без банка попадает в ключ пустой строки (чип «Без банка»)', () => {
     const s = base();
-    s.records = [{ id: 'a', period: '2026-04-15', kind: 'expense', name: 'Без банка', amount: 3000, bank: null, paid: false }];
+    s.records = [{ id: 'a', period: '2026-04-15', createdMonth: '2026-02', kind: 'expense', name: 'Без банка', amount: 3000, bank: null, paid: false }];
     const r = calc(s);
     assert.equal(r.ahead.perBank[''], 3000);
   });
@@ -524,7 +525,7 @@ describe('outstanding — просрочено слева, осталось сп
     const s = base();
     // долг 50 000, а планом закрыт всего один платёж на 10 000
     s.installments = [{
-      id: 'i1', name: 'Ремонт', total: 50000, bank: 'Альфа',
+      id: 'i1', name: 'Ремонт', total: 50000, bank: 'Альфа', createdMonth: '2026-02',
       plan: [{ period: '2026-03-15', amount: 10000 }],
     }];
     const r = calc(s);
@@ -551,8 +552,8 @@ describe('outstanding — просрочено слева, осталось сп
 
   test('банки рассрочек и разовых суммируются в один чип', () => {
     const s = base();
-    s.installments = [{ id: 'i1', name: 'Кресло', total: 20000, bank: 'Озон', plan: [{ period: '2026-03-15', amount: 20000 }] }];
-    s.records = [{ id: 'a', period: '2026-04-15', kind: 'expense', name: 'Отель', amount: 5000, bank: 'Озон', paid: false }];
+    s.installments = [{ id: 'i1', name: 'Кресло', total: 20000, bank: 'Озон', createdMonth: '2026-02', plan: [{ period: '2026-03-15', amount: 20000 }] }];
+    s.records = [{ id: 'a', period: '2026-04-15', createdMonth: '2026-02', kind: 'expense', name: 'Отель', amount: 5000, bank: 'Озон', paid: false }];
     const r = calc(s);
     assert.deepEqual(r.ahead.perBank, { 'Озон': 25000 });
     assert.equal(r.ahead.sum, 25000);
@@ -560,10 +561,10 @@ describe('outstanding — просрочено слева, осталось сп
 
   test('сумма разбивки по банкам равна итогу «впереди»', () => {
     const s = base();
-    s.installments = [{ id: 'i1', name: 'A', total: 20000, bank: 'Озон', plan: [{ period: '2026-03-15', amount: 20000 }] }];
+    s.installments = [{ id: 'i1', name: 'A', total: 20000, bank: 'Озон', createdMonth: '2026-02', plan: [{ period: '2026-03-15', amount: 20000 }] }];
     s.records = [
-      { id: 'a', period: '2026-04-15', kind: 'expense', name: 'B', amount: 5000, bank: 'Тбанк', paid: false },
-      { id: 'b', period: '2026-05-15', kind: 'expense', name: 'C', amount: 1500, bank: null, paid: false },
+      { id: 'a', period: '2026-04-15', createdMonth: '2026-02', kind: 'expense', name: 'B', amount: 5000, bank: 'Тбанк', paid: false },
+      { id: 'b', period: '2026-05-15', createdMonth: '2026-02', kind: 'expense', name: 'C', amount: 1500, bank: null, paid: false },
     ];
     const r = calc(s);
     const byBank = Object.values(r.ahead.perBank).reduce((x, y) => x + y, 0);
@@ -834,5 +835,139 @@ describe('oneOffSummary — разовые платежи в «Долгах»', 
   test('нет разовых — пустой результат', () => {
     const e = oneOffSummary(buildTimeline({ ...s, records: [] }, '2026-12-31'), '2026-10-03');
     assert.deepEqual(e, { left: 0, paid: 0, unpaid: 0, years: [] });
+  });
+});
+
+describe('outstanding — обязательства только с месяца добавления', () => {
+  const base = () => ({
+    settings: { startPeriod: '2026-01-15' }, regulars: [],
+    installments: [{
+      id: 'i', name: 'Ноутбук', total: 60000, bank: 'Альфа',
+      createdMonth: '2026-06', firstPeriod: '2026-07-15',
+      plan: [{ period: '2026-07-15', amount: 20000 }, { period: '2026-08-15', amount: 20000 }],
+    }],
+    records: [{ id: 'r', kind: 'expense', period: '2026-07-31', createdMonth: '2026-06', amount: 5000, bank: 'Озон', paid: false }],
+  });
+  const calc = (s, month) => outstanding(s, buildTimeline(s, '2027-03-31'),
+    `${month}-15`, `${month}-${eom(...month.split('-').map(Number))}`, '2026-11-09');
+
+  test('июньские долги отсутствуют в январе и мае, включая чипы банков и счётчики', () => {
+    for (const month of ['2026-01', '2026-05']) {
+      const out = calc(base(), month);
+      assert.equal(out.ahead.sum, 0);
+      assert.equal(out.ahead.once.count, 0);
+      assert.equal(out.ahead.inst.count, 0);
+      assert.deepEqual(out.ahead.perBank, {});
+    }
+  });
+
+  test('с месяца добавления учитываем весь остаток, включая недорасписанную часть', () => {
+    const out = calc(base(), '2026-06');
+    assert.equal(out.ahead.sum, 65000);
+    assert.deepEqual(out.ahead.perBank, { 'Озон': 5000, 'Альфа': 60000 });
+  });
+
+  test('старые долги: событие создания в июне важнее первого платежа в июле', () => {
+    const s = base();
+    delete s.installments[0].createdMonth;
+    delete s.records[0].createdMonth;
+    s.history = [
+      { e: 'installment', act: 'create', id: 'i', t: new Date(2026, 5, 10).getTime() },
+      { e: 'record', act: 'create', id: 'r', t: new Date(2026, 5, 20).getTime() },
+    ];
+    const before = structuredClone(s);
+    assert.equal(calc(s, '2026-05').ahead.sum, 0);
+    assert.equal(calc(s, '2026-06').ahead.sum, 65000);
+    assert.deepEqual(calc(s, '2026-06').ahead.perBank, { 'Озон': 5000, 'Альфа': 60000 });
+    assert.deepEqual(s, before, 'расчёт не меняет исходные данные');
+    s.installments[0].createdMonth = '2026-07';
+    s.records[0].createdMonth = '2026-07';
+    assert.equal(calc(s, '2026-06').ahead.sum, 0, 'явный месяц имеет приоритет над историей');
+  });
+
+  test('в месяце платежа нет двойного учёта, просрочка остаётся отдельно', () => {
+    const s = base();
+    assert.equal(calc(s, '2026-07').ahead.sum, 40000);
+    const out = calc(s, '2026-08');
+    assert.equal(out.overdue.sum, 25000);
+    assert.equal(out.ahead.sum, 20000);
+    assert.equal(out.overdue.sum + 20000 + out.ahead.sum, 65000);
+  });
+
+  test('старые данные: месяц первого платежа из firstPeriod, плана и привязанных записей', () => {
+    const s = base();
+    delete s.installments[0].createdMonth;
+    delete s.records[0].createdMonth;
+    assert.equal(calc(s, '2026-06').ahead.sum, 0);
+    assert.equal(calc(s, '2026-07').ahead.inst.sum, 40000);
+    s.installments[0].firstPeriod = '2026-08-15';
+    s.installments[0].plan.reverse(); // порядок плана не определяет начало
+    assert.equal(calc(s, '2026-07').ahead.inst.sum, 40000);
+    s.records.push({ id: 'paid', installmentId: 'i', kind: 'expense', period: '2026-06-15', amount: 10000, paid: true });
+    assert.equal(calc(s, '2026-06').ahead.inst.sum, 50000);
+    delete s.installments[0].firstPeriod;
+    s.records.pop();
+    assert.equal(calc(s, '2026-06').ahead.inst.sum, 0);
+    assert.equal(calc(s, '2026-07').ahead.inst.sum, 40000);
+  });
+
+  test('legacy автохвост и переход года: до первого месяца рассрочки нет', () => {
+    const s = base();
+    s.records = [];
+    s.installments = [{ id: 'i', total: 60000, perPeriod: 10000, firstPeriod: '2027-01-15' }];
+    assert.equal(calc(s, '2026-12').ahead.sum, 0);
+    assert.equal(calc(s, '2027-01').ahead.inst.sum, 40000);
+  });
+
+  test('legacy без расписания сохраняет остаток, оплаченные и отрицательные исключены', () => {
+    const s = base();
+    s.installments = [{ id: 'i', total: 30000, plan: [] }];
+    s.records[0].paid = true;
+    assert.equal(calc(s, '2026-06').ahead.sum, 30000);
+    s.records[0].paid = false;
+    s.records[0].amount = -5000;
+    assert.equal(calc(s, '2026-06').ahead.sum, 30000);
+  });
+});
+
+describe('createdMonthFromHistory', () => {
+  test('не-массив history не блокирует расчёт: используем первый платёж', () => {
+    for (const history of [{}, 'повреждённая история', true]) {
+      const s = {
+        settings: { startPeriod: '2026-01-15' }, regulars: [], records: [], history,
+        installments: [{ id: 'i', total: 60000, firstPeriod: '2026-06-15', plan: [] }],
+      };
+      assert.equal(createdMonthFromHistory(s, 'installment', 'i'), null);
+      const out = outstanding(s, buildTimeline(s, '2026-12-31'), '2026-06-15', '2026-06-30');
+      assert.equal(out.ahead.inst.sum, 60000);
+    }
+  });
+
+  test('только create той же сущности и id; имя, edit, paid и некорректное время не подходят', () => {
+    const t = new Date(2026, 5, 10).getTime();
+    const s = { history: [
+      null,
+      { e: 'record', id: 'x', act: 'edit', t },
+      { e: 'record', id: 'x', act: 'paid', t },
+      { e: 'installment', id: 'x', act: 'create', t },
+      { e: 'record', id: 'other', name: 'Долг', act: 'create', t },
+      ...[null, '2026-06-10', NaN, Infinity, 9e20].map(t => ({ e: 'record', id: 'x', act: 'create', t })),
+    ] };
+    assert.equal(createdMonthFromHistory(s, 'record', 'x'), null);
+    s.history.push({ e: 'record', id: 'x', act: 'create', t });
+    assert.equal(createdMonthFromHistory(s, 'record', 'x'), '2026-06');
+    assert.equal(createdMonthFromHistory({}, 'record', 'x'), null);
+  });
+
+  test('берём самое раннее создание, не зависим от порядка истории', () => {
+    const s = { history: [7, 5, 6].map(m => ({
+      e: 'installment', id: 'x', act: 'create', t: new Date(2026, m, 10).getTime(),
+    })) };
+    assert.equal(createdMonthFromHistory(s, 'installment', 'x'), '2026-06');
+  });
+
+  test('на границе месяца используем локальную дату, как в истории', () => {
+    const t = new Date(2026, 5, 1, 0, 30).getTime();
+    assert.equal(createdMonthFromHistory({ history: [{ e: 'record', id: 'r', act: 'create', t }] }, 'record', 'r'), '2026-06');
   });
 });

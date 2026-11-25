@@ -30,8 +30,7 @@ function tx(db, store, mode, fn) {
     const t = db.transaction(store, mode);
     fn(t.objectStore(store));
     t.oncomplete = () => resolve();
-    t.onerror = () => reject(t.error);
-    t.onabort = () => reject(t.error || new Error('Запись отменена'));
+    t.onerror = t.onabort = () => reject(t.error || new Error('Запись отменена'));
   });
 }
 

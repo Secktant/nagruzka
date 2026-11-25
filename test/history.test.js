@@ -49,6 +49,26 @@ describe('logChange — форма записи', () => {
 });
 
 describe('logChange — кольцевой буфер', () => {
+  test('сохраняет месяц создания старых долгов до удаления события из истории', () => {
+    fresh();
+    const t = new Date(2026, 5, 10).getTime();
+    S.state.installments = [{ id: 'i' }, { id: 'explicit', createdMonth: '2026-07' }];
+    S.state.records = [{ id: 'r', kind: 'expense' }, { id: 'unknown', kind: 'expense' }];
+    S.state.history = [
+      { e: 'installment', id: 'i', act: 'create', t },
+      { e: 'installment', id: 'explicit', act: 'create', t },
+      { e: 'record', id: 'r', act: 'create', t },
+      ...Array.from({ length: HISTORY_LIMIT - 3 }, () => ({ e: 'record', id: 'noise', act: 'edit', t })),
+    ];
+    for (let i = 0; i < 3; i++) logChange('settings', 'edit', {});
+    assert.equal(S.state.history.length, HISTORY_LIMIT);
+    assert.equal(S.state.history.some(h => h.act === 'create'), false);
+    assert.equal(S.state.installments[0].createdMonth, '2026-06');
+    assert.equal(S.state.installments[1].createdMonth, '2026-07');
+    assert.equal(S.state.records[0].createdMonth, '2026-06');
+    assert.equal(S.state.records[1].createdMonth, undefined, 'без события не выдумываем дату');
+  });
+
   test(`держит потолок в ${HISTORY_LIMIT} записей, подрезая самое старое`, () => {
     fresh();
     for (let i = 0; i < HISTORY_LIMIT + 25; i++) {
