@@ -718,6 +718,7 @@ function openDebtForm(instId) {
       const rec = {
         id: uid('inst'), name, total, perPeriod: per || plan[0].amount,
         bank: selectedBank(), firstPeriod: plan[0].period, plan,
+        createdMonth: todayISO(new Date()).slice(0, 7),
         endPeriod: form.endPeriod.value || null,
       };
       S.state.installments.push(rec);

@@ -3,7 +3,7 @@
 // поэтому состояние живёт в полях объекта S: модули читают/пишут S.state, S.timeline и т.д.
 
 import { saveVault, saveLegacy, clearPlaintextStores } from './db.js';
-import { buildTimeline } from './engine.js';
+import { buildTimeline, createdMonthFromHistory } from './engine.js';
 import { horizonEnd, TODAY } from './format.js';
 
 export const S = {
@@ -60,6 +60,7 @@ export const useVaultKey = (key, salt, syncJournal) => queueSave(async () => {
 // т.к. state в памяти всегда актуален (вызывающий код обновляет его до сохранения).
 export const markDirty = () => S.syncEngine?.notifyLocalChange();
 export const saveAll = () => {
+  rememberDebtCreatedMonths();
   localRevision++;
   const state = structuredClone(S.state);
   markDirty(); // до первого await: входящий снимок уже не может затереть эту правку
@@ -81,6 +82,19 @@ export const putSettings = saveAll;
 // однажды упрётся в лимит чанка. Кольцевой буфер — подрезаем самое старое.
 export const HISTORY_LIMIT = 1000;
 
+function rememberDebtCreatedMonths() {
+  for (const [entity, items] of [
+    ['installment', S.state.installments],
+    ['record', S.state.records.filter(r => !r.regularId && !r.installmentId && r.kind !== 'income')],
+  ]) {
+    for (const item of items) {
+      if (item.createdMonth) continue;
+      const month = createdMonthFromHistory(S.state, entity, item.id);
+      if (month) item.createdMonth = month;
+    }
+  }
+}
+
 // Запись: { t, e, act, id, name, period?, was?, now? }
 //   t    — НАСТЕННЫЕ часы устройства (Date.now()), а НЕ TODAY: событие произошло
 //          в конкретную минуту, подменять её «сегодня» приложения нельзя.
@@ -94,6 +108,8 @@ export const HISTORY_LIMIT = 1000;
 export function logChange(e, act, obj, extra) {
   if (!S.state) return;
   const h = (S.state.history ||= []);
+  // Событие создания может уйти из кольцевого лога: сначала закрепляем его месяц.
+  if (h.length >= HISTORY_LIMIT) rememberDebtCreatedMonths();
   h.push({
     t: Date.now(), e, act,
     id: obj?.id ?? null,
